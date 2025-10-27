@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="plugins">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/gta-reversed/contrib/plugins.zip!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

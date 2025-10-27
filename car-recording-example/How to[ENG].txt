@@ -1,0 +1,127 @@
+Each recording contains in ".cr" file consists of "frames". Each frame has this structure(0x30 bytes per frame):
+
+0x00 - INT32 - Timekey in ms
+0x04 - INT16 - XYZ.right.x
+0x06 - INT16 - XYZ.right.y
+0x08 - INT16 - XYZ.right.z
+0x0A - INT16 - XYZ.up.x
+0x0C - INT16 - XYZ.up.x
+0x0E - INT16 - XYZ.up.x
+0x10 - FLOAT - XYZ.pos.x
+0x14 - FLOAT - XYZ.pos.x
+0x18 - FLOAT - XYZ.pos.x
+0x1C - INT16 - x push
+0x1E - INT16 - y push
+0x20 - INT16 - z push
+0x22 - INT16 - x turn speed
+0x24 - INT16 - y turn speed
+0x26 - INT16 - z turn speed
+0x28 - INT8 - Steering Angle
+0x29 - INT8 - Accelerator Pedal Power
+0x2A - INT8 - Brake Pedal Power
+0x2B - INT8 - Hand Brake Status
+0x2C - INT8 - Horn Status
+0x2D-0x30 - 3 bytes - Reserved
+
+Recording and playback doesn't depends of FPS: they attached to game timer so it doesn't matter if you record on 60 FPS and playing this recording at 30 FPS or vice versa.
+
+
+***CAR RECORDING:
+
+For recording ".cr" file you may use CarRec script or these three scm functions(paste them into end of your script):
+
+"AllocateMemory"
+"CarRecord_Recording"
+"CarRecord_RecordToCR"
+(All SCM functions you can find in "SCM FUNCTIONS" folder)
+
+1)If you choose scm functions, firstly you should allocate memory for your recording by using "AllocateMemory" function:
+
+0AB1: call_scm_func @ALLOCATEMEMORY 1 655360 15@ // FileSize, store AllocMemoryAddress(15@)
+
+First parameter(655360) - allocated memory size in bytes(640 kB ought to be enough for anybody! xD).
+Second(15@) - allocated memory address.
+
+2)Then just call "CarRecord_Recording" function every 0 ms in loop:
+
+0AB1: call_scm_func @CARRECORD_RECORDING 3 0@ 15@ 0 14@ // CarHandle, AllocMemoryAddress, ShowInfo, IsRecMemoryFull
+
+First parameter(0@) - is vehicle handle(obviously).
+Second(15@) - allocated memory address you made before in step 1.
+Third(0) - "show info" trigger(0 - no, 1 - yes).
+Fourth(14@) - is check that memory not full yet.
+Last(fourth) parameter is optional: you can comment it here and in scm function, but it recommended to leave it as is for checking every time in loop:
+
+if
+0039:   14@ == 0 // if recording memory is not full
+jf @STOP
+
+3)Last thing you need to do(when you think recording is finished) is to record it to ".cr" file using "CarRecord_RecordToCR" function:
+
+0AB1: call_scm_func @CARRECORD_RECORDTOCR 1 15@ // AllocMemoryAddress
+
+That's all!
+
+
+***CAR PLAYBACK:
+
+To playback your ".cr" file you need these two scm functions(paste them into end of your script):
+
+"CarRecord_ReadCR"
+"CarRecord_Playback"
+
+Playback is easier that recording, you need to do these things:
+
+4)Read your ".cr" file by using "CarRecord_ReadCR" function:
+
+0AB1: call_scm_func @CARRECORD_READCR 0 15@ // read .cr file, store to AllocMemoryAddress(15@)
+
+5)Then just call "CarRecord_Playback" function every 0 ms in loop:
+
+0AB1: call_scm_func @CARRECORD_PLAYBACK 4 0@ 15@ 0 0 14@ // CarHandle, AllocMemoryAddress, SetFrame, ShowInfo, GetFrame
+
+First parameter(0@) - is vehicle handle(obviously again).
+Second(15@) - allocated memory address you got before in step 4.
+Third(0) - Set definite frame(0 - disabled, playback starts from the beginning). 
+To start playback since definite frame you must call "CarRecord_Playback" with this frame number as third parameter once, and then with "0" in loop for further playback.
+If you call "CarRecord_Playback" with definite frame in loop - vehicle will freeze in this frame's position.
+Fourth parameter(0) - "show info" trigger(0 - no, 1 - yes).
+Fifth(14@) - get current frame(optional).
+
+6)When you think playback is finished, you must free allocated memory:
+
+0AC9: free_allocated_memory 15@
+
+That's all!
+
+
+NOTE: To hear correct engine sounds and wheels/rotors movements while playback, you should use this opcode on your vehicle(one time, before start playback):
+
+03A2: set_car_status 0@ to 1
+
+Use "1" for all vehicles except boats, helis and planes(and "0" for them).
+
+WARNING: It's recommended to put any actor on driver seat of bike, boat and plane, if you use opcode 03A2!
+
+
+***OBJECT RECORDING/PLAYBACK:
+
+Same way as car recording/playback, but using "AllocateMemory", "ObjRecord_Recording" and "ObjRecord_RecordToOR" functions to record and "ObjRecord_ReadOR" and "ObjRecord_Playback" to playback.
+And with ".or" file, each frame of which has this structure(0x28 bytes per frame):
+
+0x00 - INT32 - Timekey in ms
+0x04 - INT16 - XYZ.right.x
+0x06 - INT16 - XYZ.right.y
+0x08 - INT16 - XYZ.right.z
+0x0A - INT16 - XYZ.up.x
+0x0C - INT16 - XYZ.up.x
+0x0E - INT16 - XYZ.up.x
+0x10 - FLOAT - XYZ.pos.x
+0x14 - FLOAT - XYZ.pos.x
+0x18 - FLOAT - XYZ.pos.x
+0x1C - INT16 - x push
+0x1E - INT16 - y push
+0x20 - INT16 - z push
+0x22 - INT16 - x turn speed
+0x24 - INT16 - y turn speed
+0x26 - INT16 - z turn speed
