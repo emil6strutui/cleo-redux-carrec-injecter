@@ -1,6 +1,0 @@
-:ALLOCATEMEMORY
-0AC8: 1@ = allocate_memory_size 0@
-0085: 2@ = 1@
-000A: 2@ += 0x04  // first 4 bytes is reserved for global timer, second - for max file size, third - for current frame number
-0A8C: write_memory 2@ size 4 value 0@ virtual_protect 1 // recording file size
-0AB2: ret 1 1@

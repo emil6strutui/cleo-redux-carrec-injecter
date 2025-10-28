@@ -1,213 +1,291 @@
-import { CarRecording, CarRecordingFrame, Vector3, RotationMatrix, VehicleControls } from "./CarRecording";
+import { CarRecording, VehicleStateEachFrame, FixedVector3 } from './CarRecording';
+import { KeyCode } from '.config/sa.enums.js'
+/**
+ * Vehicle memory offsets for GTA San Andreas
+ * Based on CVehicle structure from gta-reversed
+ */
+const VehicleOffsets = {
+    VELOCITY_X: 0x44,
+    VELOCITY_Y: 0x48,
+    VELOCITY_Z: 0x4C,
+    MATRIX: 0x14,          // CPlaceable::m_matrix
+    RIGHT_X: 0x0,          // Offset from matrix
+    RIGHT_Y: 0x4,
+    RIGHT_Z: 0x8,
+    TOP_X: 0x10,           // Offset from matrix
+    TOP_Y: 0x14,
+    TOP_Z: 0x18,
+    STEER_ANGLE: 0x494,
+    GAS_PEDAL: 0x49C,
+    BRAKE_PEDAL: 0x4A0,
+    VEHICLE_FLAGS: 0x428,
+    HANDBRAKE_BIT: 5
+};
 
 /**
- * Records vehicle movement data to a CarRecording
+ * Records vehicle movement data for playback
  */
 export class CarRecordingRecorder {
-    private car: Car;
     private recording: CarRecording;
     private isRecording: boolean = false;
-    private startTime: number = 0;
-    private showInfo: boolean = false;
-    private maxFrames: number = 0;
-    private carStructAddress: number = 0;
+    private fileHandle: File | null = null;
+    private recordingStartTime: number = 0;
+    private lastRecordTime: number = 0;
+    private nextRecordingInterval: number = 0;
+    private lastKeyCheckTime: number = 0;
 
-    constructor(car: Car, showInfo: boolean = false, maxFrames: number = 13650) {
-        this.car = car;
-        this.recording = new CarRecording();
-        this.showInfo = showInfo;
-        this.maxFrames = maxFrames; // ~13650 frames = 640KB at 48 bytes/frame
+    /** Base recording interval in milliseconds */
+    private readonly BASE_INTERVAL_MS = 225;
+    /** Random variation to add to recording interval (0-50ms) */
+    private readonly RANDOM_INTERVAL_MAX = 50;
+    /** Minimum time between key presses in milliseconds */
+    private readonly KEY_RELEASE_THRESHOLD = 500;
 
-        // Get vehicle struct address for direct memory access
-        this.carStructAddress = Memory.GetVehiclePointer(this.car);
+    constructor(private readonly filePath: string, recordingNumber: number = 0) {
+        this.recording = new CarRecording(recordingNumber);
+    }
+
+    /**
+     * Main update loop - call this every frame
+     */
+    update(): void {
+        // Check for toggle key combination
+        this.checkToggleRecording();
+
+        if (this.isRecording) {
+            this.processRecording();
+        }
+    }
+
+    /**
+     * Check if player pressed SHIFT+R to toggle recording
+     */
+    private checkToggleRecording(): void {
+        try {
+            const player = new Player(0);
+            const playerChar = player.getChar();
+
+            // Only allow toggling while in a vehicle
+            if (!playerChar.isInAnyCar()) {
+                if (this.isRecording) {
+                    this.stopRecording();
+                    showTextBox('Car recording stopped (exited vehicle)');
+                }
+                return;
+            }
+
+            // Check for SHIFT+R key combination with time-based debouncing
+            const currentTime = Clock.GetGameTimer();
+            const shiftPressed = Pad.IsKeyPressed(KeyCode.Shift);
+            const rPressed = Pad.IsKeyPressed(KeyCode.R);
+
+            if (shiftPressed && rPressed && (currentTime - this.lastKeyCheckTime) >= this.KEY_RELEASE_THRESHOLD) {
+                this.toggleRecording();
+                this.lastKeyCheckTime = currentTime;
+            }
+        } catch (e) {
+            log(e)
+        }
+    }
+
+    /**
+     * Toggle recording on/off
+     */
+    private toggleRecording(): void {
+        if (this.isRecording) {
+            this.stopRecording();
+            showTextBox('Car recording OFF');
+        } else {
+            this.startRecording();
+            showTextBox('Car recording ON');
+        }
     }
 
     /**
      * Start recording
      */
-    start(): void {
-        this.isRecording = true;
-        this.startTime = Clock.GetGameTimer();
+    private startRecording(): void {
+        // Clear previous recording
         this.recording.clear();
-        log("Recording started");
+
+        const currentTime = Clock.GetGameTimer();
+        this.recordingStartTime = currentTime;
+        this.lastRecordTime = currentTime;
+        this.nextRecordingInterval = this.calculateNextInterval();
+
+        // Open file for writing
+        const file = File.Open(this.filePath, "wb");
+        if (!file) {
+            showTextBox('Failed to open recording file');
+            return;
+        }
+
+        this.fileHandle = file;
+        this.isRecording = true;
     }
 
     /**
-     * Stop recording
+     * Stop recording and save to file
      */
-    stop(): void {
+    private stopRecording(): void {
+        if (!this.isRecording) return;
+
         this.isRecording = false;
-        log(`Recording stopped. Total frames: ${this.recording.getFrameCount()}`);
+
+        // Close file (frames were written incrementally)
+        if (this.fileHandle) {
+            this.fileHandle.close();
+            this.fileHandle = null;
+        }
+
+        const duration = this.recording.getDuration();
+        log(`Recording saved: ${this.recording.getFrameCount()} frames, ${duration}ms duration`);
     }
 
     /**
-     * Check if recording
+     * Write an ArrayBuffer to the file
      */
-    isActive(): boolean {
+    private writeBufferToFile(buffer: ArrayBuffer): void {
+        if (!this.fileHandle) return;
+
+        const view = new DataView(buffer);
+
+        // Allocate temporary memory for the buffer
+        const tempAddr = Memory.Allocate(buffer.byteLength);
+
+        if (!tempAddr) {
+            log('Failed to allocate memory for file writing');
+            return;
+        }
+
+        // Copy ArrayBuffer to allocated memory
+        for (let i = 0; i < buffer.byteLength; i++) {
+            Memory.WriteU8(tempAddr + i, view.getUint8(i), false);
+        }
+
+        // Use writeBlock instead of write for larger sizes (write is limited to 4 bytes)
+        const success = this.fileHandle.writeBlock(buffer.byteLength, tempAddr);
+
+        if (!success) {
+            log('Failed to write frame to file');
+        }
+
+        Memory.Free(tempAddr);
+    }
+
+    /**
+     * Process recording during active recording
+     */
+    private processRecording(): void {
+        const currentTime = Clock.GetGameTimer();
+        const timeSinceLastRecord = currentTime - this.lastRecordTime;
+
+        // Check if it's time to record a new frame
+        if (timeSinceLastRecord >= this.nextRecordingInterval) {
+            // Calculate elapsed time since recording started
+            const totalTime = currentTime - this.recordingStartTime;
+
+            // Record current vehicle state
+            this.recordFrame(totalTime);
+
+            // Update last record time and calculate next interval
+            this.lastRecordTime = currentTime;
+            this.nextRecordingInterval = this.calculateNextInterval();
+        }
+    }
+
+    /**
+     * Calculate next recording interval with randomness
+     */
+    private calculateNextInterval(): number {
+        const randomMs = Math.floor(Math.random() * this.RANDOM_INTERVAL_MAX);
+        return this.BASE_INTERVAL_MS + randomMs;
+    }
+
+    /**
+     * Record a single frame of vehicle data
+     * @param totalTime Total time elapsed since recording started (in milliseconds)
+     */
+    private recordFrame(totalTime: number): void {
+        try {
+            const player = new Player(0);
+            const playerChar = player.getChar();
+
+            if (!playerChar.isInAnyCar()) {
+                return;
+            }
+
+            const vehicle = playerChar.storeCarIsInNoSave();
+            const vehicleAddress = Memory.GetVehiclePointer(vehicle);
+
+            if (vehicleAddress === 0) {
+                return;
+            }
+
+            const frame = new VehicleStateEachFrame();
+            frame.time = totalTime;
+
+            // Read velocity (3 floats at offsets 0x44, 0x48, 0x4C)
+            const velX = Memory.ReadFloat(vehicleAddress + VehicleOffsets.VELOCITY_X, false);
+            const velY = Memory.ReadFloat(vehicleAddress + VehicleOffsets.VELOCITY_Y, false);
+            const velZ = Memory.ReadFloat(vehicleAddress + VehicleOffsets.VELOCITY_Z, false);
+            frame.velocity = new FixedVector3(velX, velY, velZ);
+
+            // Read matrix pointer
+            const matrixPtr = Memory.ReadU32(vehicleAddress + VehicleOffsets.MATRIX, false);
+
+            // Read right vector from matrix
+            const rightX = Memory.ReadFloat(matrixPtr + VehicleOffsets.RIGHT_X, false);
+            const rightY = Memory.ReadFloat(matrixPtr + VehicleOffsets.RIGHT_Y, false);
+            const rightZ = Memory.ReadFloat(matrixPtr + VehicleOffsets.RIGHT_Z, false);
+            frame.right = new FixedVector3(rightX, rightY, rightZ);
+
+            // Read top vector from matrix
+            const topX = Memory.ReadFloat(matrixPtr + VehicleOffsets.TOP_X, false);
+            const topY = Memory.ReadFloat(matrixPtr + VehicleOffsets.TOP_Y, false);
+            const topZ = Memory.ReadFloat(matrixPtr + VehicleOffsets.TOP_Z, false);
+            frame.top = new FixedVector3(topX, topY, topZ);
+
+            // Read steering angle
+            frame.steeringAngle = Memory.ReadFloat(vehicleAddress + VehicleOffsets.STEER_ANGLE, false);
+
+            // Read gas pedal
+            frame.gasPedal = Memory.ReadFloat(vehicleAddress + VehicleOffsets.GAS_PEDAL, false);
+
+            // Read brake pedal
+            frame.brakePedal = Memory.ReadFloat(vehicleAddress + VehicleOffsets.BRAKE_PEDAL, false);
+
+            // Read handbrake (bit 5 of vehicle flags at 0x428)
+            const vehicleFlags = Memory.ReadU8(vehicleAddress + VehicleOffsets.VEHICLE_FLAGS, false);
+            frame.handbrake = (vehicleFlags & (1 << VehicleOffsets.HANDBRAKE_BIT)) !== 0;
+
+            // Read position
+            const coords = vehicle.getCoordinates();
+            frame.position = new FixedVector3(coords.x, coords.y, coords.z);
+
+            // Add frame to recording and write to file
+            this.recording.addFrame(frame);
+
+            // Optionally write immediately to file for safety
+            if (this.fileHandle) {
+                this.writeBufferToFile(frame.toBuffer());
+            }
+        } catch (e) {
+            log(`Error recording frame: ${e}`);
+        }
+    }
+
+    /**
+     * Check if currently recording
+     */
+    isCurrentlyRecording(): boolean {
         return this.isRecording;
     }
 
     /**
-     * Update - should be called every frame
-     * Returns true if memory is not full, false if full
-     */
-    update(): boolean {
-        if (!this.isRecording) {
-            return true;
-        }
-
-        // Check if memory is full
-        if (this.recording.getFrameCount() >= this.maxFrames) {
-            if (this.showInfo) {
-                showTextBox("~r~RECORDING MEMORY FULL!");
-            }
-            return false;
-        }
-
-        // Capture current frame
-        const frame = this.captureFrame();
-        this.recording.addFrame(frame);
-
-        // Show info if enabled
-        if (this.showInfo) {
-            const duration = Math.floor((Date.now() - this.startTime) / 1000);
-            const frameCount = this.recording.getFrameCount();
-            const memoryUsed = Math.floor((frameCount / this.maxFrames) * 100);
-            const memoryFree = 100 - memoryUsed;
-
-            let color = "~o~"; // orange
-            if (memoryFree <= 20) {
-                color = "~r~"; // red
-            } else if (memoryFree <= 50) {
-                color = "~y~"; // yellow
-            }
-
-            Text.PrintStringNow(
-                `${color}RECORDING: ${duration} sec. ~h~Frame: ${color}${frameCount} ~h~(Free memory: ${color}${memoryFree}%~h~)`, 100
-            );
-        }
-
-        return true;
-    }
-
-    /**
-     * Capture current vehicle state as a frame
-     */
-    private captureFrame(): CarRecordingFrame {
-        const timestamp = Clock.GetGameTimer() - this.startTime;
-
-        // Get position
-        const coords = this.car.getCoordinates();
-        const position: Vector3 = { x: coords.x, y: coords.y, z: coords.z };
-
-        // Get velocity (movement speed)
-        const velocity = this.car.getSpeedVector();
-        const movementSpeed: Vector3 = { x: velocity.x, y: velocity.y, z: velocity.z };
-
-        // Read rotation matrix from vehicle struct
-        // Vehicle matrix offsets: 0x04 = right, 0x14 = forward, 0x24 = up
-        const rotation = this.readRotationMatrix();
-
-        // Read turn speed (angular velocity) from vehicle struct
-        // Offset: 0x7C
-        const turnSpeed = this.readTurnSpeed();
-
-        // Read vehicle controls from struct
-        const controls = this.readControls();
-
-        return new CarRecordingFrame(
-            timestamp,
-            rotation,
-            position,
-            movementSpeed,
-            turnSpeed,
-            controls
-        );
-    }
-
-    /**
-     * Read rotation matrix from vehicle struct memory
-     */
-    private readRotationMatrix(): RotationMatrix {
-        const struct = this.carStructAddress;
-
-        return {
-            right: {
-                x: Memory.ReadFloat(struct + 0x04, false),
-                y: Memory.ReadFloat(struct + 0x08, false),
-                z: Memory.ReadFloat(struct + 0x0C, false),
-            },
-            up: {
-                x: Memory.ReadFloat(struct + 0x24, false),
-                y: Memory.ReadFloat(struct + 0x28, false),
-                z: Memory.ReadFloat(struct + 0x2C, false),
-            }
-        };
-    }
-
-    /**
-     * Read turn speed (angular velocity) from vehicle struct
-     */
-    private readTurnSpeed(): Vector3 {
-        const struct = this.carStructAddress;
-
-        return {
-            x: Memory.ReadFloat(struct + 0x7C, false),
-            y: Memory.ReadFloat(struct + 0x80, false),
-            z: Memory.ReadFloat(struct + 0x84, false),
-        };
-    }
-
-    /**
-     * Read vehicle control inputs from struct
-     */
-    private readControls(): VehicleControls {
-        const struct = this.carStructAddress;
-
-        // CVehicle offsets:
-        // 0x46C = steering angle
-        // 0x470 = accelerator (gas pedal)
-        // 0x474 = brake pedal
-        // 0x479 = handbrake status
-        // 0x4C0 = horn status
-
-        return {
-            steeringAngle: Memory.ReadFloat(struct + 0x46C, false),
-            accelerator: Memory.ReadFloat(struct + 0x470, false),
-            brake: Memory.ReadFloat(struct + 0x474, false),
-            handBrake: Memory.ReadU8(struct + 0x479, false),
-            horn: Memory.ReadU8(struct + 0x4C0, false),
-        };
-    }
-
-    /**
-     * Get the recording
+     * Get the current recording
      */
     getRecording(): CarRecording {
         return this.recording;
-    }
-
-    /**
-     * Get recording stats
-     */
-    getStats(): {
-        frameCount: number;
-        duration: number;
-        memoryUsed: number;
-        isFull: boolean;
-    } {
-        return {
-            frameCount: this.recording.getFrameCount(),
-            duration: this.recording.getDuration(),
-            memoryUsed: Math.floor((this.recording.getFrameCount() / this.maxFrames) * 100),
-            isFull: this.recording.getFrameCount() >= this.maxFrames
-        };
-    }
-
-    /**
-     * Export recording to binary buffer (for saving to file)
-     */
-    toBuffer(): ArrayBuffer {
-        return this.recording.toBuffer();
     }
 }

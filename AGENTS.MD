@@ -19,17 +19,17 @@ This repository contains two independent modules. A car recording system for GTA
 The project is organized as a CMake-based C++23 codebase that hooks into the original GTA SA executable:
 
 - **source/game_sa/**: Core game systems (vehicles, peds, audio, physics, collision, rendering, etc.)
-  - Entity hierarchy: `CEntity` → `CPhysical` → `CVehicle`/`CPed`/`CObject`
-  - Major systems: `CWorld`, `CTheScripts`, `CCarCtrl`, `CCamera`, `CRadar`
+    - Entity hierarchy: `CEntity` → `CPhysical` → `CVehicle`/`CPed`/`CObject`
+    - Major systems: `CWorld`, `CTheScripts`, `CCarCtrl`, `CCamera`, `CRadar`
 
 - **source/app/**: Application layer (platform abstraction, input, rendering setup)
-  - Platform-specific code in `app/platform/win/` for Windows
-  - ImGui-based debug UI integration
+    - Platform-specific code in `app/platform/win/` for Windows
+    - ImGui-based debug UI integration
 
 - **source/toolsmenu/**: Debug modules system
-  - Each debug module has RenderWindow(), RenderMenuEntry(), Render3D() methods
-  - Access debug menu with F7 in-game
-  - See `source/toolsmenu/DebugModules/!README.md` for how to add new debug modules
+    - Each debug module has RenderWindow(), RenderMenuEntry(), Render3D() methods
+    - Access debug menu with F7 in-game
+    - See `source/toolsmenu/DebugModules/!README.md` for how to add new debug modules
 
 - **source/extensions/**: Helper utilities and extensions to the game engine
 

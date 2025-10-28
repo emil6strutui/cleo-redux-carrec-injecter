@@ -1,14 +1,9 @@
 /**
- * Car Recording System for GTA San Andreas
+ * Example: Car Recording
  *
- * Main entry point for the car recording system.
- * This exports all classes for use in CLEO Redux scripts.
+ * This script demonstrates how to record vehicle movement.
+ * Press SHIFT+R while in a vehicle to start/stop recording.
  */
-
-export { CarRecording, VehicleStateEachFrame, FixedVector3 } from './CarRecording';
-export { CarRecordingRecorder } from './CarRecordingRecorder';
-export { CarRecordingViewer } from './CarRecordingViewer';
-
 
 import { CarRecordingRecorder } from './CarRecordingRecorder';
 

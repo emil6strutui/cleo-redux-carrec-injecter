@@ -1,0 +1,22 @@
+# Compiled JavaScript files
+*.js
+*.js.map
+
+# Recordings
+recordings/
+*.rrr
+
+# Node modules (if using npm/yarn)
+node_modules/
+
+# IDE files
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+
+# Logs
+*.log

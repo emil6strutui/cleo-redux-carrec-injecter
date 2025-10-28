@@ -1,362 +1,344 @@
 /**
- * Represents a 3D vector for position or velocity
+ * Car Recording System for GTA San Andreas
+ *
+ * This module provides TypeScript classes to work with vehicle recordings,
+ * matching the CVehicleStateEachFrame structure from the game engine.
  */
-export interface Vector3 {
-    x: number;
-    y: number;
-    z: number;
-}
 
 /**
- * Represents a 3x3 rotation matrix (right and up vectors)
- * The "at" vector can be calculated from cross product of right and up
+ * Represents a 3D vector with fixed-point compression
  */
-export interface RotationMatrix {
-    right: Vector3;
-    up: Vector3;
-}
-
-/**
- * Represents the vehicle control inputs
- */
-export interface VehicleControls {
-    /** Steering angle: negative = wheels right, positive = wheels left */
-    steeringAngle: number;
-    /** Accelerator pedal power (0.0 to 1.0) */
-    accelerator: number;
-    /** Brake pedal power (0.0 to 1.0) */
-    brake: number;
-    /** Hand brake status (16 = off, 48 = on) */
-    handBrake: number;
-    /** Horn status (0 = off, non-zero = on) */
-    horn: number;
-}
-
-/**
- * Represents a single frame in the car recording
- * Frame size: 0x30 (48) bytes
- */
-export class CarRecordingFrame {
-    /** Timestamp in milliseconds */
-    public timestamp: number;
-
-    /** Rotation matrix (right and up vectors as INT16 compressed) */
-    public rotation: RotationMatrix;
-
-    /** Position in world coordinates (x, y, z as FLOAT) */
-    public position: Vector3;
-
-    /** Movement speed/push (velocity) */
-    public movementSpeed: Vector3;
-
-    /** Turn speed (angular velocity) */
-    public turnSpeed: Vector3;
-
-    /** Vehicle control inputs */
-    public controls: VehicleControls;
-
+export class FixedVector3 {
     constructor(
-        timestamp: number = 0,
-        rotation: RotationMatrix = { right: { x: 1, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 } },
-        position: Vector3 = { x: 0, y: 0, z: 0 },
-        movementSpeed: Vector3 = { x: 0, y: 0, z: 0 },
-        turnSpeed: Vector3 = { x: 0, y: 0, z: 0 },
-        controls: VehicleControls = { steeringAngle: 0, accelerator: 0, brake: 0, handBrake: 16, horn: 0 }
-    ) {
-        this.timestamp = timestamp;
-        this.rotation = rotation;
-        this.position = position;
-        this.movementSpeed = movementSpeed;
-        this.turnSpeed = turnSpeed;
-        this.controls = controls;
+        public x: number = 0,
+        public y: number = 0,
+        public z: number = 0
+    ) {}
+
+    /**
+     * Compress a float vector to fixed-point integers
+     * @param scale The compression scale factor
+     * @returns Array of compressed integer values [x, y, z]
+     */
+    compress<T extends number>(scale: number, bytesPerComponent: 1 | 2): T[] {
+        return [
+            Math.floor(this.x * scale) as T,
+            Math.floor(this.y * scale) as T,
+            Math.floor(this.z * scale) as T
+        ];
     }
 
     /**
-     * Serialize frame to binary buffer (48 bytes)
-     *
-     * Frame structure:
-     * 0x00 - INT32 - Timestamp in ms
-     * 0x04 - INT16 - rotation.right.x (compressed × 30000)
-     * 0x06 - INT16 - rotation.right.y
-     * 0x08 - INT16 - rotation.right.z
-     * 0x0A - INT16 - rotation.up.x
-     * 0x0C - INT16 - rotation.up.y
-     * 0x0E - INT16 - rotation.up.z
-     * 0x10 - FLOAT - position.x
-     * 0x14 - FLOAT - position.y
-     * 0x18 - FLOAT - position.z
-     * 0x1C - INT16 - movementSpeed.x (compressed × 10000)
-     * 0x1E - INT16 - movementSpeed.y
-     * 0x20 - INT16 - movementSpeed.z
-     * 0x22 - INT16 - turnSpeed.x
-     * 0x24 - INT16 - turnSpeed.y
-     * 0x26 - INT16 - turnSpeed.z
-     * 0x28 - INT8 - steering angle (× 20)
-     * 0x29 - INT8 - accelerator (× 100)
-     * 0x2A - INT8 - brake (× 100)
-     * 0x2B - INT8 - hand brake status
-     * 0x2C - INT8 - horn status
-     * 0x2D-0x2F - 3 bytes reserved
+     * Decompress fixed-point integers to float vector
+     * @param values Array of compressed integer values [x, y, z]
+     * @param scale The compression scale factor
+     */
+    static decompress(values: number[], scale: number): FixedVector3 {
+        return new FixedVector3(
+            values[0] / scale,
+            values[1] / scale,
+            values[2] / scale
+        );
+    }
+
+    /**
+     * Create from a regular array
+     */
+    static fromArray(arr: number[]): FixedVector3 {
+        return new FixedVector3(arr[0] || 0, arr[1] || 0, arr[2] || 0);
+    }
+
+    /**
+     * Convert to array
+     */
+    toArray(): [number, number, number] {
+        return [this.x, this.y, this.z];
+    }
+}
+
+/**
+ * Represents the state of a vehicle at a single frame
+ * Matches the CVehicleStateEachFrame structure (32 bytes / 0x20)
+ */
+export class VehicleStateEachFrame {
+    /** Time in milliseconds from the start of recording */
+    time: number = 0;
+
+    /** Vehicle velocity (compressed as int16 with scale 16383.5) */
+    velocity: FixedVector3 = new FixedVector3();
+
+    /** Right vector of vehicle orientation (compressed as int8 with scale 127.0) */
+    right: FixedVector3 = new FixedVector3();
+
+    /** Top/Up vector of vehicle orientation (compressed as int8 with scale 127.0) */
+    top: FixedVector3 = new FixedVector3();
+
+    /** Steering angle -1.0 to 1.0 (compressed as uint8 with scale 20.0) */
+    steeringAngle: number = 0;
+
+    /** Gas pedal power 0.0 to 1.0 (compressed as uint8 with scale 100.0) */
+    gasPedal: number = 0;
+
+    /** Brake pedal power 0.0 to 1.0 (compressed as uint8 with scale 100.0) */
+    brakePedal: number = 0;
+
+    /** Whether handbrake is active */
+    handbrake: boolean = false;
+
+    /** World position of the vehicle */
+    position: FixedVector3 = new FixedVector3();
+
+    /**
+     * Serialize this frame to a binary buffer (32 bytes)
      */
     toBuffer(): ArrayBuffer {
-        const buffer = new ArrayBuffer(0x30); // 48 bytes
+        const buffer = new ArrayBuffer(32);
         const view = new DataView(buffer);
+        let offset = 0;
 
-        // 0x00: Timestamp (INT32)
-        view.setInt32(0x00, this.timestamp, true);
+        // Time (4 bytes - uint32)
+        view.setUint32(offset, this.time, true);
+        offset += 4;
 
-        // 0x04-0x0E: Rotation matrix (6 × INT16)
-        view.setInt16(0x04, this.compressRotation(this.rotation.right.x), true);
-        view.setInt16(0x06, this.compressRotation(this.rotation.right.y), true);
-        view.setInt16(0x08, this.compressRotation(this.rotation.right.z), true);
-        view.setInt16(0x0A, this.compressRotation(this.rotation.up.x), true);
-        view.setInt16(0x0C, this.compressRotation(this.rotation.up.y), true);
-        view.setInt16(0x0E, this.compressRotation(this.rotation.up.z), true);
+        // Velocity (6 bytes - 3 x int16, scale 16383.5)
+        const velocity = this.velocity.compress<number>(16383.5, 2);
+        view.setInt16(offset, velocity[0], true); offset += 2;
+        view.setInt16(offset, velocity[1], true); offset += 2;
+        view.setInt16(offset, velocity[2], true); offset += 2;
 
-        // 0x10-0x18: Position (3 × FLOAT)
-        view.setFloat32(0x10, this.position.x, true);
-        view.setFloat32(0x14, this.position.y, true);
-        view.setFloat32(0x18, this.position.z, true);
+        // Right vector (3 bytes - 3 x int8, scale 127.0)
+        const right = this.right.compress<number>(127.0, 1);
+        view.setInt8(offset, right[0]); offset += 1;
+        view.setInt8(offset, right[1]); offset += 1;
+        view.setInt8(offset, right[2]); offset += 1;
 
-        // 0x1C-0x26: Movement and turn speed (6 × INT16)
-        view.setInt16(0x1C, this.compressSpeed(this.movementSpeed.x), true);
-        view.setInt16(0x1E, this.compressSpeed(this.movementSpeed.y), true);
-        view.setInt16(0x20, this.compressSpeed(this.movementSpeed.z), true);
-        view.setInt16(0x22, this.compressSpeed(this.turnSpeed.x), true);
-        view.setInt16(0x24, this.compressSpeed(this.turnSpeed.y), true);
-        view.setInt16(0x26, this.compressSpeed(this.turnSpeed.z), true);
+        // Top vector (3 bytes - 3 x int8, scale 127.0)
+        const top = this.top.compress<number>(127.0, 1);
+        view.setInt8(offset, top[0]); offset += 1;
+        view.setInt8(offset, top[1]); offset += 1;
+        view.setInt8(offset, top[2]); offset += 1;
 
-        // 0x28-0x2C: Controls (5 × INT8)
-        view.setInt8(0x28, Math.round(this.controls.steeringAngle * 20));
-        view.setInt8(0x29, Math.round(this.controls.accelerator * 100));
-        view.setInt8(0x2A, Math.round(this.controls.brake * 100));
-        view.setInt8(0x2B, this.controls.handBrake);
-        view.setInt8(0x2C, this.controls.horn);
+        // Steering angle (1 byte - int8, scale 20.0)
+        view.setInt8(offset, Math.floor(this.steeringAngle * 20.0)); offset += 1;
 
-        // 0x2D-0x2F: Reserved (3 bytes, set to 0)
-        view.setUint8(0x2D, 0);
-        view.setUint8(0x2E, 0);
-        view.setUint8(0x2F, 0);
+        // Gas pedal (1 byte - uint8, scale 100.0)
+        view.setUint8(offset, Math.floor(this.gasPedal * 100.0)); offset += 1;
+
+        // Brake pedal (1 byte - uint8, scale 100.0)
+        view.setUint8(offset, Math.floor(this.brakePedal * 100.0)); offset += 1;
+
+        // Handbrake (1 byte - bool)
+        view.setUint8(offset, this.handbrake ? 1 : 0); offset += 1;
+
+        // Position (12 bytes - 3 x float32)
+        view.setFloat32(offset, this.position.x, true); offset += 4;
+        view.setFloat32(offset, this.position.y, true); offset += 4;
+        view.setFloat32(offset, this.position.z, true); offset += 4;
 
         return buffer;
     }
 
     /**
-     * Deserialize frame from binary buffer
+     * Deserialize a frame from a binary buffer
      */
-    static fromBuffer(buffer: ArrayBuffer, offset: number = 0): CarRecordingFrame {
-        const view = new DataView(buffer, offset, 0x30);
+    static fromBuffer(buffer: ArrayBuffer): VehicleStateEachFrame {
+        const frame = new VehicleStateEachFrame();
+        const view = new DataView(buffer);
+        let offset = 0;
 
-        const timestamp = view.getInt32(0x00, true);
+        // Time (4 bytes - uint32)
+        frame.time = view.getUint32(offset, true);
+        offset += 4;
 
-        const rotation: RotationMatrix = {
-            right: {
-                x: CarRecordingFrame.decompressRotation(view.getInt16(0x04, true)),
-                y: CarRecordingFrame.decompressRotation(view.getInt16(0x06, true)),
-                z: CarRecordingFrame.decompressRotation(view.getInt16(0x08, true)),
-            },
-            up: {
-                x: CarRecordingFrame.decompressRotation(view.getInt16(0x0A, true)),
-                y: CarRecordingFrame.decompressRotation(view.getInt16(0x0C, true)),
-                z: CarRecordingFrame.decompressRotation(view.getInt16(0x0E, true)),
-            }
-        };
+        // Velocity (6 bytes - 3 x int16, scale 16383.5)
+        const velocityX = view.getInt16(offset, true); offset += 2;
+        const velocityY = view.getInt16(offset, true); offset += 2;
+        const velocityZ = view.getInt16(offset, true); offset += 2;
+        frame.velocity = FixedVector3.decompress([velocityX, velocityY, velocityZ], 16383.5);
 
-        const position: Vector3 = {
-            x: view.getFloat32(0x10, true),
-            y: view.getFloat32(0x14, true),
-            z: view.getFloat32(0x18, true),
-        };
+        // Right vector (3 bytes - 3 x int8, scale 127.0)
+        const rightX = view.getInt8(offset); offset += 1;
+        const rightY = view.getInt8(offset); offset += 1;
+        const rightZ = view.getInt8(offset); offset += 1;
+        frame.right = FixedVector3.decompress([rightX, rightY, rightZ], 127.0);
 
-        const movementSpeed: Vector3 = {
-            x: CarRecordingFrame.decompressSpeed(view.getInt16(0x1C, true)),
-            y: CarRecordingFrame.decompressSpeed(view.getInt16(0x1E, true)),
-            z: CarRecordingFrame.decompressSpeed(view.getInt16(0x20, true)),
-        };
+        // Top vector (3 bytes - 3 x int8, scale 127.0)
+        const topX = view.getInt8(offset); offset += 1;
+        const topY = view.getInt8(offset); offset += 1;
+        const topZ = view.getInt8(offset); offset += 1;
+        frame.top = FixedVector3.decompress([topX, topY, topZ], 127.0);
 
-        const turnSpeed: Vector3 = {
-            x: CarRecordingFrame.decompressSpeed(view.getInt16(0x22, true)),
-            y: CarRecordingFrame.decompressSpeed(view.getInt16(0x24, true)),
-            z: CarRecordingFrame.decompressSpeed(view.getInt16(0x26, true)),
-        };
+        // Steering angle (1 byte - int8, scale 20.0)
+        frame.steeringAngle = view.getInt8(offset) / 20.0; offset += 1;
 
-        const controls: VehicleControls = {
-            steeringAngle: view.getInt8(0x28) / 20.0,
-            accelerator: view.getInt8(0x29) / 100.0,
-            brake: view.getInt8(0x2A) / 100.0,
-            handBrake: view.getUint8(0x2B),
-            horn: view.getUint8(0x2C),
-        };
+        // Gas pedal (1 byte - uint8, scale 100.0)
+        frame.gasPedal = view.getUint8(offset) / 100.0; offset += 1;
 
-        return new CarRecordingFrame(timestamp, rotation, position, movementSpeed, turnSpeed, controls);
-    }
+        // Brake pedal (1 byte - uint8, scale 100.0)
+        frame.brakePedal = view.getUint8(offset) / 100.0; offset += 1;
 
-    /**
-     * Compress rotation value to INT16 (multiply by 30000)
-     */
-    private compressRotation(value: number): number {
-        return Math.max(-32768, Math.min(32767, Math.round(value * 30000)));
-    }
+        // Handbrake (1 byte - bool)
+        frame.handbrake = view.getUint8(offset) !== 0; offset += 1;
 
-    /**
-     * Decompress rotation value from INT16 (divide by 30000)
-     */
-    private static decompressRotation(value: number): number {
-        return value / 30000.0;
-    }
+        // Position (12 bytes - 3 x float32)
+        const posX = view.getFloat32(offset, true); offset += 4;
+        const posY = view.getFloat32(offset, true); offset += 4;
+        const posZ = view.getFloat32(offset, true); offset += 4;
+        frame.position = new FixedVector3(posX, posY, posZ);
 
-    /**
-     * Compress speed value to INT16 (multiply by 10000)
-     */
-    private compressSpeed(value: number): number {
-        return Math.max(-32768, Math.min(32767, Math.round(value * 10000)));
-    }
-
-    /**
-     * Decompress speed value from INT16 (divide by 10000)
-     */
-    private static decompressSpeed(value: number): number {
-        return value / 10000.0;
+        return frame;
     }
 }
 
 /**
- * Represents a complete car recording with header and frames
+ * Represents a complete vehicle recording (collection of frames)
  */
 export class CarRecording {
-    /** Global timer for playback synchronization */
-    private globalTimer: number = 0;
-
-    /** Total file size */
-    private fileSize: number = 0;
-
-    /** Current frame number for recording/playback */
-    private currentFrameNumber: number = 0;
-
     /** Array of recorded frames */
-    public frames: CarRecordingFrame[] = [];
+    frames: VehicleStateEachFrame[] = [];
 
-    constructor(frames: CarRecordingFrame[] = []) {
-        this.frames = frames;
-        this.updateFileSize();
+    /** Recording number/ID */
+    recordingNumber: number = 0;
+
+    constructor(recordingNumber: number = 0) {
+        this.recordingNumber = recordingNumber;
     }
 
     /**
      * Add a frame to the recording
      */
-    addFrame(frame: CarRecordingFrame): void {
+    addFrame(frame: VehicleStateEachFrame): void {
         this.frames.push(frame);
-        this.updateFileSize();
     }
 
     /**
-     * Update file size based on current frame count
+     * Get the total duration of the recording in milliseconds
      */
-    private updateFileSize(): void {
-        this.fileSize = 0x0C + (this.frames.length * 0x30);
+    getDuration(): number {
+        if (this.frames.length === 0) return 0;
+        return this.frames[this.frames.length - 1].time;
     }
 
     /**
-     * Get total frame count
+     * Get the number of frames in this recording
      */
     getFrameCount(): number {
         return this.frames.length;
     }
 
     /**
-     * Get frame at specific index
+     * Get the total size in bytes
      */
-    getFrame(index: number): CarRecordingFrame | undefined {
-        return this.frames[index];
+    getByteSize(): number {
+        return this.frames.length * 32; // Each frame is 32 bytes
     }
 
     /**
-     * Clear all frames
-     */
-    clear(): void {
-        this.frames = [];
-        this.globalTimer = 0;
-        this.currentFrameNumber = 0;
-        this.updateFileSize();
-    }
-
-    /**
-     * Serialize entire recording to binary buffer (.cr file format)
-     *
-     * File structure:
-     * 0x00 - INT32 - Global timer (reserved for playback)
-     * 0x04 - INT32 - File size
-     * 0x08 - INT32 - Current frame number (reserved for playback)
-     * 0x0C - [...] - Frame data (0x30 bytes per frame)
+     * Serialize the entire recording to a binary buffer
      */
     toBuffer(): ArrayBuffer {
-        const headerSize = 0x0C;
-        const totalSize = headerSize + (this.frames.length * 0x30);
+        const totalSize = this.getByteSize();
         const buffer = new ArrayBuffer(totalSize);
-        const view = new DataView(buffer);
+        const uint8View = new Uint8Array(buffer);
 
-        // Write header
-        view.setInt32(0x00, this.globalTimer, true);
-        view.setInt32(0x04, totalSize - headerSize, true); // File size (excluding header)
-        view.setInt32(0x08, this.currentFrameNumber, true);
-
-        // Write frames
-        this.frames.forEach((frame, index) => {
+        let offset = 0;
+        for (const frame of this.frames) {
             const frameBuffer = frame.toBuffer();
             const frameView = new Uint8Array(frameBuffer);
-            const offset = headerSize + (index * 0x30);
-
-            for (let i = 0; i < frameView.length; i++) {
-                view.setUint8(offset + i, frameView[i]);
-            }
-        });
+            uint8View.set(frameView, offset);
+            offset += 32;
+        }
 
         return buffer;
     }
 
     /**
-     * Deserialize recording from binary buffer (.cr file)
+     * Deserialize a recording from a binary buffer
      */
-    static fromBuffer(buffer: ArrayBuffer): CarRecording {
-        const view = new DataView(buffer);
+    static fromBuffer(buffer: ArrayBuffer, recordingNumber: number = 0): CarRecording {
+        const recording = new CarRecording(recordingNumber);
+        const frameSize = 32;
+        const frameCount = buffer.byteLength / frameSize;
 
-        // Read header
-        const globalTimer = view.getInt32(0x00, true);
-        const fileSize = view.getInt32(0x04, true);
-        const currentFrameNumber = view.getInt32(0x08, true);
-
-        // Calculate frame count
-        const frameCount = Math.floor(fileSize / 0x30);
-
-        // Read frames
-        const frames: CarRecordingFrame[] = [];
         for (let i = 0; i < frameCount; i++) {
-            const offset = 0x0C + (i * 0x30);
-            frames.push(CarRecordingFrame.fromBuffer(buffer, offset));
+            const frameBuffer = buffer.slice(i * frameSize, (i + 1) * frameSize);
+            const frame = VehicleStateEachFrame.fromBuffer(frameBuffer);
+            recording.addFrame(frame);
         }
-
-        const recording = new CarRecording(frames);
-        recording.globalTimer = globalTimer;
-        recording.fileSize = fileSize;
-        recording.currentFrameNumber = currentFrameNumber;
 
         return recording;
     }
 
     /**
-     * Get recording duration in seconds
+     * Clear all frames from the recording
      */
-    getDuration(): number {
-        if (this.frames.length === 0) return 0;
-        const lastFrame = this.frames[this.frames.length - 1];
-        return lastFrame.timestamp / 1000.0;
+    clear(): void {
+        this.frames = [];
     }
 
     /**
-     * Get recording progress percentage
+     * Get a frame at a specific index
      */
-    getProgress(currentFrame: number): number {
-        if (this.frames.length === 0) return 0;
-        return (currentFrame / this.frames.length) * 100;
+    getFrame(index: number): VehicleStateEachFrame | undefined {
+        return this.frames[index];
+    }
+
+    /**
+     * Get the frame closest to a specific time
+     */
+    getFrameAtTime(time: number): VehicleStateEachFrame | undefined {
+        if (this.frames.length === 0) return undefined;
+
+        // Binary search for the closest frame
+        let left = 0;
+        let right = this.frames.length - 1;
+        let closest = this.frames[0];
+        let minDiff = Math.abs(this.frames[0].time - time);
+
+        while (left <= right) {
+            const mid = Math.floor((left + right) / 2);
+            const frame = this.frames[mid];
+            const diff = Math.abs(frame.time - time);
+
+            if (diff < minDiff) {
+                minDiff = diff;
+                closest = frame;
+            }
+
+            if (frame.time < time) {
+                left = mid + 1;
+            } else if (frame.time > time) {
+                right = mid - 1;
+            } else {
+                return frame; // Exact match
+            }
+        }
+
+        return closest;
+    }
+
+    /**
+     * Get two frames for interpolation at a specific time
+     * Returns [previousFrame, nextFrame, interpolationFactor]
+     */
+    getInterpolationFrames(time: number): [VehicleStateEachFrame, VehicleStateEachFrame, number] | undefined {
+        if (this.frames.length < 2) return undefined;
+
+        // Find the two frames to interpolate between
+        for (let i = 0; i < this.frames.length - 1; i++) {
+            const current = this.frames[i];
+            const next = this.frames[i + 1];
+
+            if (current.time <= time && time <= next.time) {
+                const timeDiff = next.time - current.time;
+                const factor = timeDiff > 0 ? (time - current.time) / timeDiff : 0;
+                return [current, next, factor];
+            }
+        }
+
+        // If time is beyond the last frame, return the last two frames
+        const last = this.frames[this.frames.length - 1];
+        const beforeLast = this.frames[this.frames.length - 2];
+        return [beforeLast, last, 1.0];
     }
 }

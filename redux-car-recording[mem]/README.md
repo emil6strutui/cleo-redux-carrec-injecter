@@ -1,219 +1,134 @@
-# Car Recording System for GTA San Andreas (CLEO Redux)
+# Car Recording System for GTA San Andreas
 
-A TypeScript implementation of the car recording system for GTA San Andreas using CLEO Redux. This allows you to record and playback vehicle movements with full physics data.
+A complete car recording and playback system for CLEO Redux, matching the binary format from the original game engine.
 
 ## Features
 
-- **Full vehicle state capture**: Position, rotation, velocity, angular velocity, and control inputs
-- **Efficient binary format**: 48 bytes per frame with INT16 compression
-- **Real-time recording**: Frame-based recording tied to game timer (FPS-independent)
-- **Smooth playback**: Automatic frame interpolation and timing synchronization
-- **Memory efficient**: Configurable frame limit (~13,650 frames = 640KB by default)
-- **Visual feedback**: Optional on-screen info display during recording/playback
-- **Loop support**: Continuous playback with automatic restart
+- Record vehicle movement data including:
+  - Position and orientation
+  - Velocity
+  - Steering angle
+  - Gas, brake, and handbrake inputs
+- Binary file format compatible with GTA SA's `.rrr` format
+- Smooth playback with frame interpolation
+- Configurable recording intervals
+- Easy-to-use TypeScript API
 
-## File Structure
+## Structure
 
-```
-CarRecording.ts           - Core data structures (CarRecording, CarRecordingFrame)
-CarRecordingRecorder.ts   - Recording implementation
-CarRecordingViewer.ts     - Playback implementation
-exports.ts                - Module exports
-example-recorder-viewer.ts - Complete usage example
-```
+The system consists of three main components:
 
-## Quick Start
+### CarRecording
+The core data structure that holds vehicle state frames. Each frame contains:
+- Time (milliseconds from start)
+- Velocity vector (compressed as int16)
+- Right/Top orientation vectors (compressed as int8)
+- Steering angle, gas, brake, handbrake
+- World position
+
+### CarRecordingRecorder
+Records vehicle movement data:
+- Press **SHIFT+R** to start/stop recording
+- Records at ~225ms intervals with randomness
+- Automatically saves to binary file
+- Only records when player is in a vehicle
+
+### CarRecordingViewer
+Plays back recorded data:
+- Load `.rrr` files
+- Apply recorded movement to vehicles
+- Supports playback speed control
+- Frame interpolation for smooth playback
+- Loop support
+
+## Usage
 
 ### Recording
 
 ```typescript
-import { CarRecordingRecorder } from "./CarRecordingRecorder";
+import { CarRecordingRecorder } from './CarRecordingRecorder';
 
-const player = new Player(0);
-const car = player.storeCarIsInNoSave();
+const recorder = new CarRecordingRecorder('./recordings/my_recording.rrr', 900);
 
-// Create recorder with info display enabled
-const recorder = new CarRecordingRecorder(car, true);
-
-// Start recording
-recorder.start();
-
-// Update every frame
-(async function() {
-    while (recorder.isActive()) {
-        await asyncWait(0);
-        const hasSpace = recorder.update();
-        if (!hasSpace) {
-            recorder.stop(); // Memory full
-        }
-    }
-})();
-
-// Get recording buffer
-const buffer = recorder.toBuffer();
+// In your main loop
+while (true) {
+    wait(0);
+    recorder.update();
+}
 ```
+
+Press **SHIFT+R** while in a vehicle to toggle recording.
 
 ### Playback
 
 ```typescript
-import { CarRecordingViewer } from "./CarRecordingViewer";
+import { CarRecordingViewer } from './CarRecordingViewer';
 
-// Create vehicle for playback
-const car = Car.Create(411, x, y, z); // Infernus
+const viewer = new CarRecordingViewer('./recordings/my_recording.rrr');
+viewer.load();
 
-// Create viewer with loop enabled
-const viewer = CarRecordingViewer.fromBuffer(car, buffer, true, true);
+// Start playback on a vehicle
+const vehicle = playerChar.storeCarIsInNoSave();
+viewer.startPlayback(vehicle, false); // false = don't loop
 
-// Start playback
-viewer.start();
-
-// Update every frame
-(async function() {
-    while (true) {
-        await asyncWait(0);
-        const frameIndex = viewer.update();
-        if (frameIndex === -1) {
-            break; // Playback ended
-        }
-    }
-})();
+// In your main loop
+while (true) {
+    wait(0);
+    const deltaTime = 16.67; // or calculate from timer
+    viewer.update(deltaTime);
+}
 ```
 
-## API Reference
+## Examples
 
-### CarRecordingRecorder
+See the example scripts:
+- `example-recorder.ts` - Simple recording script
+- `example-viewer.ts` - Simple playback script
 
-#### Constructor
-```typescript
-constructor(car: Car, showInfo?: boolean, maxFrames?: number)
+## File Format
+
+The recording format matches GTA SA's CVehicleStateEachFrame structure (32 bytes per frame):
+
 ```
-- `car`: Vehicle to record
-- `showInfo`: Show on-screen recording info (default: false)
-- `maxFrames`: Maximum frames to record (default: 13650)
-
-#### Methods
-- `start()`: Start recording
-- `stop()`: Stop recording
-- `update()`: Update recording (call every frame), returns false if memory full
-- `isActive()`: Check if currently recording
-- `getRecording()`: Get CarRecording object
-- `getStats()`: Get recording statistics
-- `toBuffer()`: Export to binary ArrayBuffer
-
-### CarRecordingViewer
-
-#### Constructor
-```typescript
-constructor(car: Car, recording: CarRecording, showInfo?: boolean, loop?: boolean)
+Offset | Size | Type   | Description
+-------|------|--------|------------------
+0x00   | 4    | uint32 | Time (milliseconds)
+0x04   | 6    | int16  | Velocity (x, y, z) * 16383.5
+0x0A   | 3    | int8   | Right vector (x, y, z) * 127.0
+0x0D   | 3    | int8   | Top vector (x, y, z) * 127.0
+0x10   | 1    | int8   | Steering angle * 20.0
+0x11   | 1    | uint8  | Gas pedal * 100.0
+0x12   | 1    | uint8  | Brake pedal * 100.0
+0x13   | 1    | bool   | Handbrake
+0x14   | 12   | float  | Position (x, y, z)
 ```
-- `car`: Vehicle for playback
-- `recording`: CarRecording to play
-- `showInfo`: Show on-screen playback info (default: false)
-- `loop`: Loop playback automatically (default: false)
 
-#### Methods
-- `start()`: Start playback from beginning
-- `stop()`: Stop playback
-- `pause()`: Pause playback
-- `resume()`: Resume playback
-- `seekToFrame(index)`: Jump to specific frame
-- `update()`: Update playback (call every frame), returns current frame or -1 if ended
-- `isActive()`: Check if currently playing
-- `getStats()`: Get playback statistics
-- `static fromBuffer(car, buffer, showInfo?, loop?)`: Create viewer from ArrayBuffer
+## Vehicle Memory Offsets
 
-### CarRecording
+Based on the CVehicle structure from gta-reversed:
 
-#### Methods
-- `addFrame(frame)`: Add a frame
-- `getFrame(index)`: Get frame at index
-- `getFrameCount()`: Get total frames
-- `getDuration()`: Get duration in seconds
-- `getProgress(currentFrame)`: Get playback progress percentage
-- `toBuffer()`: Serialize to binary
-- `static fromBuffer(buffer)`: Deserialize from binary
-- `clear()`: Remove all frames
-
-### CarRecordingFrame
-
-Represents a single frame (48 bytes):
-- `timestamp`: Time in milliseconds
-- `rotation`: Rotation matrix (right & up vectors)
-- `position`: World position (x, y, z)
-- `movementSpeed`: Velocity vector
-- `turnSpeed`: Angular velocity vector
-- `controls`: Steering, accelerator, brake, handbrake, horn
-
-## Binary Format
-
-Each recording file (.cr) consists of:
-
-### Header (12 bytes)
-- `0x00` (4 bytes): Global timer (for playback sync)
-- `0x04` (4 bytes): File size in bytes
-- `0x08` (4 bytes): Current frame number (playback state)
-
-### Frame Data (48 bytes per frame)
-- `0x00` (4 bytes): Timestamp (INT32)
-- `0x04` (6 bytes): Rotation right vector (3 × INT16, compressed ×30000)
-- `0x0A` (6 bytes): Rotation up vector (3 × INT16, compressed ×30000)
-- `0x10` (12 bytes): Position (3 × FLOAT)
-- `0x1C` (6 bytes): Movement speed (3 × INT16, compressed ×10000)
-- `0x22` (6 bytes): Turn speed (3 × INT16, compressed ×10000)
-- `0x28` (1 byte): Steering angle (INT8, ×20)
-- `0x29` (1 byte): Accelerator (INT8, ×100)
-- `0x2A` (1 byte): Brake (INT8, ×100)
-- `0x2B` (1 byte): Handbrake status
-- `0x2C` (1 byte): Horn status
-- `0x2D` (3 bytes): Reserved
-
-## Vehicle Struct Offsets (CVehicle)
-
-The implementation uses direct memory access to the vehicle struct:
-
-### Matrix (Rotation)
-- `0x04`: Right vector X (FLOAT)
-- `0x08`: Right vector Y (FLOAT)
-- `0x0C`: Right vector Z (FLOAT)
-- `0x14`: Forward vector X (FLOAT)
-- `0x18`: Forward vector Y (FLOAT)
-- `0x1C`: Forward vector Z (FLOAT)
-- `0x24`: Up vector X (FLOAT)
-- `0x28`: Up vector Y (FLOAT)
-- `0x2C`: Up vector Z (FLOAT)
-
-### Physics
-- `0x70`: Movement speed X (FLOAT)
-- `0x74`: Movement speed Y (FLOAT)
-- `0x78`: Movement speed Z (FLOAT)
-- `0x7C`: Turn speed X (FLOAT)
-- `0x80`: Turn speed Y (FLOAT)
-- `0x84`: Turn speed Z (FLOAT)
-
-### Controls
-- `0x46C`: Steering angle (FLOAT)
-- `0x470`: Accelerator pedal (FLOAT)
-- `0x474`: Brake pedal (FLOAT)
-- `0x479`: Handbrake status (BYTE)
-- `0x4C0`: Horn status (BYTE)
+```
+0x14  - Matrix pointer
+0x44  - Velocity X
+0x48  - Velocity Y
+0x4C  - Velocity Z
+0x428 - Vehicle flags (bit 5 = handbrake)
+0x494 - Steering angle
+0x49C - Gas pedal
+0x4A0 - Brake pedal
+```
 
 ## Notes
 
-- Recordings are FPS-independent (use game timer)
-- Compatible with the original CLEO .cr file format
-- Requires CLEO Redux with TypeScript support
-- Vehicle must have `setStatus(1)` for proper physics during playback
-- For boats/helis/planes, use `setStatus(0)` and add a driver ped
-
-## TODO
-
-- Implement file I/O helpers for saving/loading .cr files
-- Add support for object recording (.or format)
-- Add frame interpolation for smoother playback
-- Add recording compression/optimization
-- Add recording editing capabilities (trim, merge, etc.)
+- Recording files are saved in binary format (`.rrr`)
+- Each frame is exactly 32 bytes
+- Recordings use fixed-point compression to save space
+- The system requires direct memory access to vehicle data
+- Compatible with gta-reversed and original GTA SA
 
 ## Credits
 
-Based on the original CLEO car recording system by [Original Author].
-TypeScript implementation for CLEO Redux.
+Based on the car recording system from:
+- Original GTA San Andreas implementation
+- gta-reversed project (CVehicleRecording)
+- CLEO Redux scripting system

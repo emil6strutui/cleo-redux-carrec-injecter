@@ -1,63 +1,108 @@
-import { CarRecording, CarRecordingFrame, Vector3 } from "./CarRecording";
+import { CarRecording, VehicleStateEachFrame, FixedVector3 } from './CarRecording';
 
 /**
- * Plays back a recorded car recording on a vehicle
+ * Plays back recorded vehicle movement data
  */
 export class CarRecordingViewer {
-    private car: Car;
-    private recording: CarRecording;
+    private recording: CarRecording | null = null;
     private isPlaying: boolean = false;
     private isPaused: boolean = false;
-    private startTime: number = 0;
-    private pauseTime: number = 0;
+    private playbackVehicle: Car | null = null;
+    private currentTime: number = 0;
+    private playbackSpeed: number = 1.0;
+    private looped: boolean = false;
     private currentFrameIndex: number = 0;
-    private showInfo: boolean = false;
-    private loop: boolean = false;
-    private carStructAddress: number = 0;
-    private setFrame: number = 0; // For seeking to specific frame
 
-    constructor(car: Car, recording: CarRecording, showInfo: boolean = false, loop: boolean = false) {
-        this.car = car;
-        this.recording = recording;
-        this.showInfo = showInfo;
-        this.loop = loop;
+    constructor(private readonly filePath: string) {}
 
-        // Get vehicle struct address
-        this.carStructAddress = Memory.GetVehiclePointer(this.car);
+    /**
+     * Load a recording from file
+     */
+    load(): boolean {
+        try {
+            const file = File.Open(this.filePath, "rb");
+            if (!file) {
+                log(`Failed to open recording file: ${this.filePath}`);
+                return false;
+            }
 
-        // Set car status for proper engine sounds and physics
-        // Use 1 for cars, 0 for boats/helis/planes
-        this.car.setStatus(1);
+            const fileSize = file.getSize();
+            if (fileSize === 0) {
+                file.close();
+                log('Recording file is empty');
+                return false;
+            }
+
+            // Allocate memory to read the file
+            const bufferAddr = Memory.Allocate(fileSize);
+            if (!bufferAddr) {
+                file.close();
+                log('Failed to allocate memory for reading file');
+                return false;
+            }
+
+            file.readBlock(fileSize, bufferAddr);
+            file.close();
+
+            // Convert memory to ArrayBuffer
+            const buffer = new ArrayBuffer(fileSize);
+            const view = new DataView(buffer);
+
+            for (let i = 0; i < fileSize; i++) {
+                const byte = Memory.ReadU8(bufferAddr + i, false);
+                view.setUint8(i, byte);
+            }
+
+            Memory.Free(bufferAddr);
+
+            // Parse the recording
+            this.recording = CarRecording.fromBuffer(buffer);
+
+            log(`Loaded recording: ${this.recording.getFrameCount()} frames, ${this.recording.getDuration()}ms`);
+            return true;
+        } catch (e) {
+            log(`Error loading recording: ${e}`);
+            return false;
+        }
     }
 
     /**
-     * Start playback from beginning
+     * Start playback on a vehicle
      */
-    start(): void {
+    startPlayback(vehicle: Car, looped: boolean = false): boolean {
+        if (!this.recording || this.recording.getFrameCount() === 0) {
+            log('No recording loaded or recording is empty');
+            return false;
+        }
+
+        this.playbackVehicle = vehicle;
         this.isPlaying = true;
         this.isPaused = false;
-        this.startTime = Date.now();
+        this.looped = looped;
+        this.currentTime = 0;
         this.currentFrameIndex = 0;
-        this.setFrame = 0;
-        log("Playback started");
+
+        log('Playback started');
+        return true;
     }
 
     /**
      * Stop playback
      */
-    stop(): void {
+    stopPlayback(): void {
         this.isPlaying = false;
         this.isPaused = false;
-        log("Playback stopped");
+        this.playbackVehicle = null;
+        this.currentTime = 0;
+        this.currentFrameIndex = 0;
     }
 
     /**
      * Pause playback
      */
     pause(): void {
-        if (this.isPlaying && !this.isPaused) {
+        if (this.isPlaying) {
             this.isPaused = true;
-            this.pauseTime = Date.now();
         }
     }
 
@@ -65,273 +110,193 @@ export class CarRecordingViewer {
      * Resume playback
      */
     resume(): void {
-        if (this.isPlaying && this.isPaused) {
-            this.isPaused = false;
-            const pauseDuration = Date.now() - this.pauseTime;
-            this.startTime += pauseDuration;
-        }
+        this.isPaused = false;
     }
 
     /**
-     * Seek to specific frame
+     * Set playback speed multiplier
      */
-    seekToFrame(frameIndex: number): void {
-        if (frameIndex >= 0 && frameIndex < this.recording.getFrameCount()) {
-            this.setFrame = frameIndex;
-            this.currentFrameIndex = frameIndex;
+    setPlaybackSpeed(speed: number): void {
+        this.playbackSpeed = Math.max(0.1, Math.min(10.0, speed));
+    }
 
-            // If playing, adjust start time
-            if (this.isPlaying) {
-                const frame = this.recording.getFrame(frameIndex);
-                if (frame) {
-                    this.startTime = Date.now() - frame.timestamp;
-                }
+    /**
+     * Main update loop - call this every frame
+     * @param deltaTime Time since last frame in milliseconds
+     */
+    update(deltaTime: number = 16.67): void {
+        if (!this.isPlaying || this.isPaused || !this.playbackVehicle || !this.recording) {
+            return;
+        }
+
+        // Check if vehicle still exists
+        if (Car.IsDead(+this.playbackVehicle)) {
+            this.stopPlayback();
+            return;
+        }
+
+        // Update playback time
+        this.currentTime += deltaTime * this.playbackSpeed;
+
+        // Check if playback finished
+        if (this.currentTime >= this.recording.getDuration()) {
+            if (this.looped) {
+                this.currentTime = 0;
+                this.currentFrameIndex = 0;
+            } else {
+                this.stopPlayback();
+                log('Playback finished');
+                return;
             }
         }
+
+        // Get frames for interpolation
+        const interpolationData = this.recording.getInterpolationFrames(this.currentTime);
+        if (!interpolationData) {
+            return;
+        }
+
+        const [prevFrame, nextFrame, factor] = interpolationData;
+
+        // Apply interpolated vehicle state
+        this.applyVehicleState(prevFrame, nextFrame, factor);
     }
 
     /**
-     * Check if playing
+     * Apply vehicle state from recording frames with interpolation
      */
-    isActive(): boolean {
+    private applyVehicleState(prevFrame: VehicleStateEachFrame, nextFrame: VehicleStateEachFrame, factor: number): void {
+        if (!this.playbackVehicle) return;
+
+        try {
+            // Interpolate position
+            const x = this.lerp(prevFrame.position.x, nextFrame.position.x, factor);
+            const y = this.lerp(prevFrame.position.y, nextFrame.position.y, factor);
+            const z = this.lerp(prevFrame.position.z, nextFrame.position.z, factor);
+
+            // Set vehicle position
+            this.playbackVehicle.setCoordinates(x, y, z);
+
+            // Get vehicle memory address for direct manipulation
+            const vehicleAddr = Memory.GetVehiclePointer(this.playbackVehicle);
+
+            if (vehicleAddr !== 0) {
+                // Interpolate and set velocity
+                const velX = this.lerp(prevFrame.velocity.x, nextFrame.velocity.x, factor);
+                const velY = this.lerp(prevFrame.velocity.y, nextFrame.velocity.y, factor);
+                const velZ = this.lerp(prevFrame.velocity.z, nextFrame.velocity.z, factor);
+
+                Memory.WriteFloat(vehicleAddr + 0x44, velX, false);
+                Memory.WriteFloat(vehicleAddr + 0x48, velY, false);
+                Memory.WriteFloat(vehicleAddr + 0x4C, velZ, false);
+
+                // Set orientation vectors (right and top)
+                const matrixPtr = Memory.ReadU32(vehicleAddr + 0x14, false);
+
+                if (matrixPtr !== 0) {
+                    // Interpolate right vector
+                    const rightX = this.lerp(prevFrame.right.x, nextFrame.right.x, factor);
+                    const rightY = this.lerp(prevFrame.right.y, nextFrame.right.y, factor);
+                    const rightZ = this.lerp(prevFrame.right.z, nextFrame.right.z, factor);
+
+                    Memory.WriteFloat(matrixPtr + 0x0, rightX, false);
+                    Memory.WriteFloat(matrixPtr + 0x4, rightY, false);
+                    Memory.WriteFloat(matrixPtr + 0x8, rightZ, false);
+
+                    // Interpolate top vector
+                    const topX = this.lerp(prevFrame.top.x, nextFrame.top.x, factor);
+                    const topY = this.lerp(prevFrame.top.y, nextFrame.top.y, factor);
+                    const topZ = this.lerp(prevFrame.top.z, nextFrame.top.z, factor);
+
+                    Memory.WriteFloat(matrixPtr + 0x10, topX, false);
+                    Memory.WriteFloat(matrixPtr + 0x14, topY, false);
+                    Memory.WriteFloat(matrixPtr + 0x18, topZ, false);
+
+                    // Calculate and set forward vector (cross product of right and top)
+                    const fwdX = rightY * topZ - rightZ * topY;
+                    const fwdY = rightZ * topX - rightX * topZ;
+                    const fwdZ = rightX * topY - rightY * topX;
+
+                    Memory.WriteFloat(matrixPtr + 0x20, fwdX, false);
+                    Memory.WriteFloat(matrixPtr + 0x24, fwdY, false);
+                    Memory.WriteFloat(matrixPtr + 0x28, fwdZ, false);
+                }
+
+                // Set control inputs (use next frame's values, no interpolation for discrete inputs)
+                Memory.WriteFloat(vehicleAddr + 0x494, nextFrame.steeringAngle, false);
+                Memory.WriteFloat(vehicleAddr + 0x49C, nextFrame.gasPedal, false);
+                Memory.WriteFloat(vehicleAddr + 0x4A0, nextFrame.brakePedal, false);
+
+                // Set handbrake flag
+                const flags = Memory.ReadU8(vehicleAddr + 0x428, false);
+                if (nextFrame.handbrake) {
+                    Memory.WriteU8(vehicleAddr + 0x428, flags | (1 << 5), false);
+                } else {
+                    Memory.WriteU8(vehicleAddr + 0x428, flags & ~(1 << 5), false);
+                }
+            }
+        } catch (e) {
+            log(`Error applying vehicle state: ${e}`);
+        }
+    }
+
+    /**
+     * Linear interpolation
+     */
+    private lerp(a: number, b: number, t: number): number {
+        return a + (b - a) * t;
+    }
+
+    /**
+     * Check if currently playing
+     */
+    isCurrentlyPlaying(): boolean {
         return this.isPlaying;
     }
 
     /**
-     * Update - should be called every frame
-     * Returns current frame index, or -1 if playback ended
+     * Check if paused
      */
-    update(): number {
-        if (!this.isPlaying) {
-            return -1;
-        }
-
-        // Handle pause
-        if (this.isPaused) {
-            // Apply current frame position without advancing
-            const frame = this.recording.getFrame(this.currentFrameIndex);
-            if (frame) {
-                this.applyFrameStatic(frame);
-            }
-            return this.currentFrameIndex;
-        }
-
-        // Calculate elapsed time
-        const elapsedTime = Date.now() - this.startTime;
-
-        // Handle seeking
-        if (this.setFrame > 0) {
-            const frame = this.recording.getFrame(this.setFrame);
-            if (frame) {
-                this.startTime = Date.now() - frame.timestamp;
-                this.currentFrameIndex = this.setFrame;
-            }
-            this.setFrame = 0; // Reset seek flag
-        }
-
-        // Find appropriate frame for current time
-        const targetFrame = this.findFrameForTime(elapsedTime);
-
-        if (targetFrame === -1) {
-            // Reached end of recording
-            if (this.loop) {
-                // Restart playback
-                this.start();
-                return 0;
-            } else {
-                this.stop();
-                return -1;
-            }
-        }
-
-        this.currentFrameIndex = targetFrame;
-        const frame = this.recording.getFrame(targetFrame);
-
-        if (frame) {
-            // Apply frame data to vehicle
-            if (elapsedTime > 0) {
-                this.applyFrameDynamic(frame);
-            } else {
-                this.applyFrameStatic(frame);
-            }
-
-            // Show info if enabled
-            if (this.showInfo) {
-                const duration = Math.floor(elapsedTime / 1000);
-                const progress = Math.floor(this.recording.getProgress(this.currentFrameIndex));
-                Text.PrintStringNow(
-                    `~p~PLAYBACK: ${duration} sec. ~h~Frame: ~p~${this.currentFrameIndex} ~h~(~p~${progress}% ~h~of full recording)`, 100
-                );
-            }
-        }
-
-        return this.currentFrameIndex;
+    isCurrentlyPaused(): boolean {
+        return this.isPaused;
     }
 
     /**
-     * Find the correct frame for a given timestamp
+     * Get current playback time
      */
-    private findFrameForTime(time: number): number {
-        const frameCount = this.recording.getFrameCount();
+    getCurrentTime(): number {
+        return this.currentTime;
+    }
 
-        if (frameCount === 0) {
-            return -1;
-        }
+    /**
+     * Get total duration
+     */
+    getDuration(): number {
+        return this.recording ? this.recording.getDuration() : 0;
+    }
 
-        // Skip ahead to find the right frame
-        while (this.currentFrameIndex < frameCount - 1) {
-            const nextFrame = this.recording.getFrame(this.currentFrameIndex + 1);
-            if (nextFrame && nextFrame.timestamp <= time) {
-                this.currentFrameIndex++;
-            } else {
+    /**
+     * Seek to a specific time in the recording
+     */
+    seekTo(time: number): void {
+        if (!this.recording) return;
+
+        this.currentTime = Math.max(0, Math.min(time, this.recording.getDuration()));
+
+        // Update frame index
+        for (let i = 0; i < this.recording.getFrameCount(); i++) {
+            const frame = this.recording.getFrame(i);
+            if (frame && frame.time >= this.currentTime) {
+                this.currentFrameIndex = i;
                 break;
             }
         }
-
-        // Check if we've reached the end of recording
-        const currentFrame = this.recording.getFrame(this.currentFrameIndex);
-        if (!currentFrame) {
-            return -1;
-        }
-
-        // If we're on the last frame and time has exceeded it, playback is complete
-        if (this.currentFrameIndex >= frameCount - 1) {
-            const lastFrame = this.recording.getFrame(frameCount - 1);
-            if (lastFrame && time > lastFrame.timestamp) {
-                return -1;
-            }
-        }
-
-        return this.currentFrameIndex;
     }
 
     /**
-     * Apply frame data to vehicle (dynamic - with velocity)
+     * Get the loaded recording
      */
-    private applyFrameDynamic(frame: CarRecordingFrame): void {
-        const struct = this.carStructAddress;
-
-        // Apply rotation matrix (right and up vectors only)
-        // Note: The original CLEO implementation skips the forward vector
-        // The game calculates it automatically from right and up vectors
-
-        // Right vector (offsets 0x04, 0x08, 0x0C)
-        Memory.WriteFloat(struct + 0x04, frame.rotation.right.x, false);
-        Memory.WriteFloat(struct + 0x08, frame.rotation.right.y, false);
-        Memory.WriteFloat(struct + 0x0C, frame.rotation.right.z, false);
-
-        // Skip forward vector at 0x14, 0x18, 0x1C - game handles this automatically
-
-        // Up vector (offsets 0x24, 0x28, 0x2C)
-        Memory.WriteFloat(struct + 0x24, frame.rotation.up.x, false);
-        Memory.WriteFloat(struct + 0x28, frame.rotation.up.y, false);
-        Memory.WriteFloat(struct + 0x2C, frame.rotation.up.z, false);
-
-        // Apply position
-        this.car.setCoordinates(frame.position.x, frame.position.y, frame.position.z);
-
-        // Apply movement speed (velocity)
-        Memory.WriteFloat(struct + 0x70, frame.movementSpeed.x, false);
-        Memory.WriteFloat(struct + 0x74, frame.movementSpeed.y, false);
-        Memory.WriteFloat(struct + 0x78, frame.movementSpeed.z, false);
-
-        // Apply turn speed (angular velocity)
-        Memory.WriteFloat(struct + 0x7C, frame.turnSpeed.x, false);
-        Memory.WriteFloat(struct + 0x80, frame.turnSpeed.y, false);
-        Memory.WriteFloat(struct + 0x84, frame.turnSpeed.z, false);
-
-        // Apply controls
-        this.applyControls(frame);
-    }
-
-    /**
-     * Apply frame data to vehicle (static - position only, no velocity)
-     * Used for paused playback or initial frame
-     */
-    private applyFrameStatic(frame: CarRecordingFrame): void {
-        const struct = this.carStructAddress;
-
-        // Apply rotation matrix (right and up vectors only)
-        // Note: The original CLEO implementation skips the forward vector
-        // The game calculates it automatically from right and up vectors
-
-        // Right vector (offsets 0x04, 0x08, 0x0C)
-        Memory.WriteFloat(struct + 0x04, frame.rotation.right.x, false);
-        Memory.WriteFloat(struct + 0x08, frame.rotation.right.y, false);
-        Memory.WriteFloat(struct + 0x0C, frame.rotation.right.z, false);
-
-        // Skip forward vector at 0x14, 0x18, 0x1C - game handles this automatically
-
-        // Up vector (offsets 0x24, 0x28, 0x2C)
-        Memory.WriteFloat(struct + 0x24, frame.rotation.up.x, false);
-        Memory.WriteFloat(struct + 0x28, frame.rotation.up.y, false);
-        Memory.WriteFloat(struct + 0x2C, frame.rotation.up.z, false);
-
-        // Apply position
-        this.car.setCoordinates(frame.position.x, frame.position.y, frame.position.z);
-
-        // Zero out velocities for static display
-        Memory.WriteFloat(struct + 0x70, 0.0, false);
-        Memory.WriteFloat(struct + 0x74, 0.0, false);
-        Memory.WriteFloat(struct + 0x78, 0.0, false);
-        Memory.WriteFloat(struct + 0x7C, 0.0, false);
-        Memory.WriteFloat(struct + 0x80, 0.0, false);
-        Memory.WriteFloat(struct + 0x84, 0.0, false);
-
-        // Apply controls
-        this.applyControls(frame);
-    }
-
-    /**
-     * Apply vehicle controls from frame
-     */
-    private applyControls(frame: CarRecordingFrame): void {
-        const struct = this.carStructAddress;
-
-        // Apply steering, accelerator, brake
-        Memory.WriteFloat(struct + 0x46C, frame.controls.steeringAngle, false);
-        Memory.WriteFloat(struct + 0x470, frame.controls.accelerator, false);
-        Memory.WriteFloat(struct + 0x474, frame.controls.brake, false);
-        Memory.WriteU8(struct + 0x479, frame.controls.handBrake, false);
-
-        // Handle horn
-        Memory.WriteU8(struct + 0x4C0, frame.controls.horn, false);
-
-        // Handle helicopter weapons (Hunter, Seasparrow)
-        const model = this.car.getModel();
-        if (frame.controls.handBrake > 16 && (model === 155 || model === 177)) {
-            // Fire helicopter weapons
-            // This would need a proper opcode call
-            // native("FIRE_GUNS_ON_VEHICLE", this.car.handle);
-        }
-    }
-
-    /**
-     * Get playback stats
-     */
-    getStats(): {
-        currentFrame: number;
-        totalFrames: number;
-        progress: number;
-        elapsedTime: number;
-        isPlaying: boolean;
-        isPaused: boolean;
-    } {
-        return {
-            currentFrame: this.currentFrameIndex,
-            totalFrames: this.recording.getFrameCount(),
-            progress: this.recording.getProgress(this.currentFrameIndex),
-            elapsedTime: this.isPlaying ? Date.now() - this.startTime : 0,
-            isPlaying: this.isPlaying,
-            isPaused: this.isPaused
-        };
-    }
-
-    /**
-     * Load recording from binary buffer
-     */
-    static fromBuffer(car: Car, buffer: ArrayBuffer, showInfo: boolean = false, loop: boolean = false): CarRecordingViewer {
-        const recording = CarRecording.fromBuffer(buffer);
-        return new CarRecordingViewer(car, recording, showInfo, loop);
+    getRecording(): CarRecording | null {
+        return this.recording;
     }
 }
