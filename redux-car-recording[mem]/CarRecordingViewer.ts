@@ -13,6 +13,7 @@ export class CarRecordingViewer {
     private playbackSpeed: number = 1.0;
     private looped: boolean = false;
     private currentFrameIndex: number = 0;
+    private driver: Char = null
 
     constructor(private readonly filePath: string) {}
 
@@ -104,8 +105,11 @@ export class CarRecordingViewer {
 
         const player = new Player(0)
         player.getChar().warpIntoCarAsPassenger(vehicle, SeatId.FrontRight)
-        const driver = Char.Create(PedType.CivMale, 14, initialPosition.x + 2.0, initialPosition.y, initialPosition.z)
-        driver.warpIntoCar(vehicle)
+        this.driver = Char.Create(PedType.CivMale, 14, initialPosition.x + 2.0, initialPosition.y, initialPosition.z)
+        this.driver.warpIntoCar(vehicle)
+        vehicle.setIdle()
+
+        Streaming.MarkModelAsNoLongerNeeded(14)
 
         this.playbackVehicle = vehicle;
         this.isPlaying = true;
@@ -115,7 +119,18 @@ export class CarRecordingViewer {
         this.currentFrameIndex = 0;
 
 
-        vehicle.setCoordinates(initialPosition.x, initialPosition.y, initialPosition.z);
+        // IMPORTANT: Apply the complete first frame state, including orientation!
+        const firstFrame = this.recording.frames[0];
+        const secondFrame = this.recording.frames[1] || firstFrame; // Fallback if only one frame
+
+
+        // First set position
+        vehicle.setCoordinates(
+            firstFrame.position.x,
+            firstFrame.position.y,
+            firstFrame.position.z
+        );
+        this.applyVehicleState(firstFrame, secondFrame, 0.0);
 
         log('Playback started');
         return true;
@@ -148,6 +163,8 @@ export class CarRecordingViewer {
         this.playbackVehicle = null;
         this.currentTime = 0;
         this.currentFrameIndex = 0;
+        this.driver.delete()
+        this.driver = null;
     }
 
     /**

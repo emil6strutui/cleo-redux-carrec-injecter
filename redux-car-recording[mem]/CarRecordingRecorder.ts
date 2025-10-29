@@ -122,6 +122,7 @@ export class CarRecordingRecorder {
 
         this.fileHandle = file;
         this.isRecording = true;
+        this.recordFrame(0)
     }
 
     /**
