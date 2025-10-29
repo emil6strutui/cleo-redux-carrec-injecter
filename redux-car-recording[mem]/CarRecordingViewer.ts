@@ -78,15 +78,23 @@ export class CarRecordingViewer {
 
         const vehicleAddr = Memory.GetVehiclePointer(vehicle);
         if (vehicleAddr !== 0) {
-            // Set physicalFlags.bDisableCollisionForce = true (bit 1)
-            const physFlagsOffset = 0x10;
+            // Physical flags at offset 0x40
+            const physFlagsOffset = 0x40;
             const physFlags = Memory.ReadU32(vehicleAddr + physFlagsOffset, false);
-            Memory.WriteU32(vehicleAddr + physFlagsOffset, physFlags | 0x2, false);
+
+            // Set bDisableCollisionForce (bit 2 = 0x4) to TRUE
+            // Set bCollidable (bit 3 = 0x8) to FALSE
+            const newPhysFlags = (physFlags | 0x4) & ~0x8;
+            Memory.WriteU32(vehicleAddr + physFlagsOffset, newPhysFlags, false);
 
             // Turn engine on (vehicleFlags bit 4)
             const vehFlagsOffset = 0x428;
             const vehFlags = Memory.ReadU8(vehicleAddr + vehFlagsOffset, false);
             Memory.WriteU8(vehicleAddr + vehFlagsOffset, vehFlags | (1 << 4), false);
+
+            // Reset m_autoPilot.m_vehicleRecordingId = 0
+            const recordingIdOffset = 0x424;
+            Memory.WriteI8(vehicleAddr + recordingIdOffset, 0, false);
         }
 
         Streaming.RequestModel(14)
@@ -121,10 +129,17 @@ export class CarRecordingViewer {
         if (this.playbackVehicle) {
             const vehicleAddr = Memory.GetVehiclePointer(this.playbackVehicle);
             if (vehicleAddr !== 0) {
-                // Restore physicalFlags.bDisableCollisionForce = false (clear bit 1)
-                const physFlagsOffset = 0x10;
+                // Restore physical flags at offset 0x40
+                const physFlagsOffset = 0x40;
                 const physFlags = Memory.ReadU32(vehicleAddr + physFlagsOffset, false);
-                Memory.WriteU32(vehicleAddr + physFlagsOffset, physFlags & ~0x2, false);
+
+                // Clear bDisableCollisionForce (bit 2) and set bCollidable back to TRUE (bit 3)
+                const restoredPhysFlags = (physFlags & ~0x4) | 0x8;
+                Memory.WriteU32(vehicleAddr + physFlagsOffset, restoredPhysFlags, false);
+
+                // Reset m_autoPilot.m_vehicleRecordingId = -1
+                const recordingIdOffset = 0x424;
+                Memory.WriteI8(vehicleAddr + recordingIdOffset, -1, false);
             }
         }
 
