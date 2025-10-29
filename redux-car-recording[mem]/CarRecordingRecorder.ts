@@ -114,7 +114,7 @@ export class CarRecordingRecorder {
         this.nextRecordingInterval = this.calculateNextInterval();
 
         // Open file for writing
-        const file = File.Open(this.filePath, "wb");
+        const file = File.Open(this.filePath, "wb" as any);
         if (!file) {
             showTextBox('Failed to open recording file');
             return;
@@ -263,6 +263,7 @@ export class CarRecordingRecorder {
             const coords = vehicle.getCoordinates();
             frame.position = new FixedVector3(coords.x, coords.y, coords.z);
 
+            log(`gas pedal: ${frame.gasPedal} brake pedal ${frame.brakePedal} steering angle: ${frame.steeringAngle}`)
             // Add frame to recording and write to file
             this.recording.addFrame(frame);
 

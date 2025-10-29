@@ -1,4 +1,5 @@
 import { CarRecording, VehicleStateEachFrame, FixedVector3 } from './CarRecording';
+import {PedType, SeatId} from '.config/sa.enums.js';
 
 /**
  * Plays back recorded vehicle movement data
@@ -20,7 +21,7 @@ export class CarRecordingViewer {
      */
     load(): boolean {
         try {
-            const file = File.Open(this.filePath, "rb");
+            const file = File.Open(this.filePath, "rb" as any);
             if (!file) {
                 log(`Failed to open recording file: ${this.filePath}`);
                 return false;
@@ -75,12 +76,38 @@ export class CarRecordingViewer {
             return false;
         }
 
+        const vehicleAddr = Memory.GetVehiclePointer(vehicle);
+        if (vehicleAddr !== 0) {
+            // Set physicalFlags.bDisableCollisionForce = true (bit 1)
+            const physFlagsOffset = 0x10;
+            const physFlags = Memory.ReadU32(vehicleAddr + physFlagsOffset, false);
+            Memory.WriteU32(vehicleAddr + physFlagsOffset, physFlags | 0x2, false);
+
+            // Turn engine on (vehicleFlags bit 4)
+            const vehFlagsOffset = 0x428;
+            const vehFlags = Memory.ReadU8(vehicleAddr + vehFlagsOffset, false);
+            Memory.WriteU8(vehicleAddr + vehFlagsOffset, vehFlags | (1 << 4), false);
+        }
+
+        Streaming.RequestModel(14)
+        Streaming.LoadAllModelsNow()
+
+        const initialPosition = this.recording.frames[0].position
+
+        const player = new Player(0)
+        player.getChar().warpIntoCarAsPassenger(vehicle, SeatId.FrontRight)
+        const driver = Char.Create(PedType.CivMale, 14, initialPosition.x + 2.0, initialPosition.y, initialPosition.z)
+        driver.warpIntoCar(vehicle)
+
         this.playbackVehicle = vehicle;
         this.isPlaying = true;
         this.isPaused = false;
         this.looped = looped;
         this.currentTime = 0;
         this.currentFrameIndex = 0;
+
+
+        vehicle.setCoordinates(initialPosition.x, initialPosition.y, initialPosition.z);
 
         log('Playback started');
         return true;
@@ -90,6 +117,17 @@ export class CarRecordingViewer {
      * Stop playback
      */
     stopPlayback(): void {
+        // Restore vehicle collision flags
+        if (this.playbackVehicle) {
+            const vehicleAddr = Memory.GetVehiclePointer(this.playbackVehicle);
+            if (vehicleAddr !== 0) {
+                // Restore physicalFlags.bDisableCollisionForce = false (clear bit 1)
+                const physFlagsOffset = 0x10;
+                const physFlags = Memory.ReadU32(vehicleAddr + physFlagsOffset, false);
+                Memory.WriteU32(vehicleAddr + physFlagsOffset, physFlags & ~0x2, false);
+            }
+        }
+
         this.isPlaying = false;
         this.isPaused = false;
         this.playbackVehicle = null;
@@ -174,9 +212,6 @@ export class CarRecordingViewer {
             const y = this.lerp(prevFrame.position.y, nextFrame.position.y, factor);
             const z = this.lerp(prevFrame.position.z, nextFrame.position.z, factor);
 
-            // Set vehicle position
-            this.playbackVehicle.setCoordinates(x, y, z);
-
             // Get vehicle memory address for direct manipulation
             const vehicleAddr = Memory.GetVehiclePointer(this.playbackVehicle);
 
@@ -222,17 +257,33 @@ export class CarRecordingViewer {
                     Memory.WriteFloat(matrixPtr + 0x28, fwdZ, false);
                 }
 
-                // Set control inputs (use next frame's values, no interpolation for discrete inputs)
-                Memory.WriteFloat(vehicleAddr + 0x494, nextFrame.steeringAngle, false);
-                Memory.WriteFloat(vehicleAddr + 0x49C, nextFrame.gasPedal, false);
-                Memory.WriteFloat(vehicleAddr + 0x4A0, nextFrame.brakePedal, false);
+                // ===== CRITICAL: Apply pedal and steering values =====
+                // This is what makes the engine rev up and behave correctly!
 
-                // Set handbrake flag
-                const flags = Memory.ReadU8(vehicleAddr + 0x428, false);
-                if (nextFrame.handbrake) {
-                    Memory.WriteU8(vehicleAddr + 0x428, flags | (1 << 5), false);
+                // Interpolate and set steering angle (CVehicle::m_fSteerAngle at offset 0x494)
+                const steerAngle = this.lerp(prevFrame.steeringAngle, nextFrame.steeringAngle, factor);
+                Memory.WriteFloat(vehicleAddr + 0x494, steerAngle, false);
+
+                // Interpolate and set gas pedal (CVehicle::m_GasPedal at offset 0x49C)
+
+                const gasPedal = this.lerp(prevFrame.gasPedal, nextFrame.gasPedal, factor);
+                Memory.WriteFloat(vehicleAddr + 0x49C, gasPedal, false);
+
+                // Interpolate and set brake pedal (CVehicle::m_BrakePedal at offset 0x4A0)
+                const brakePedal = this.lerp(prevFrame.brakePedal, nextFrame.brakePedal, factor);
+                Memory.WriteFloat(vehicleAddr + 0x4A0, brakePedal, false);
+
+                // Set handbrake flag (vehicleFlags.bIsHandbrakeOn - bit 5 of byte at offset 0x428)
+                // Note: We use the current frame's handbrake (no interpolation for boolean)
+                const vehFlagsOffset = 0x428;
+                const handbrakeUsed = factor < 0.5 ? prevFrame.handbrake : nextFrame.handbrake;
+
+
+                const vehFlags = Memory.ReadU8(vehicleAddr + vehFlagsOffset, false);
+                if (handbrakeUsed) {
+                    Memory.WriteU8(vehicleAddr + vehFlagsOffset, vehFlags | (1 << 5), false);
                 } else {
-                    Memory.WriteU8(vehicleAddr + 0x428, flags & ~(1 << 5), false);
+                    Memory.WriteU8(vehicleAddr + vehFlagsOffset, vehFlags & ~(1 << 5), false);
                 }
             }
         } catch (e) {
