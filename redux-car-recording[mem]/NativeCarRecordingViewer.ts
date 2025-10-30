@@ -148,7 +148,7 @@ export class NativeCarRecordingViewer {
         Memory.WriteI32(NativeCarRecordingViewer.ADDR_PLAYBACK_BUFFER_SIZE + slotOffset, totalSize, false);
 
         // PlaybackIndex[slot] = 0
-        Memory.WriteI32(NativeCarRecordingViewer.ADDR_PLAYBACK_INDEX + slotOffset, 0, false);
+        Memory.WriteI32(NativeCarRecordingViewer.ADDR_PLAYBACK_INDEX + slotOffset, 900, false);
 
         // PlaybackRunningTime[slot] = 0.0f
         Memory.WriteFloat(NativeCarRecordingViewer.ADDR_PLAYBACK_RUNNING_TIME + slotOffset, 0.0, false);
@@ -157,7 +157,7 @@ export class NativeCarRecordingViewer {
         Memory.WriteFloat(NativeCarRecordingViewer.ADDR_PLAYBACK_SPEED + slotOffset, 1.0, false);
 
         // bPlaybackGoingOn[slot] = true
-        Memory.WriteU8(NativeCarRecordingViewer.ADDR_PLAYBACK_GOING_ON + this.playbackSlot, 1, false);
+        Memory.WriteU8(NativeCarRecordingViewer.ADDR_PLAYBACK_GOING_ON + this.playbackSlot, 0, false);
 
         // bPlaybackLooped[slot] = looped
         Memory.WriteU8(NativeCarRecordingViewer.ADDR_PLAYBACK_LOOPED + this.playbackSlot, looped ? 1 : 0, false);
