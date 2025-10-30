@@ -8,6 +8,7 @@
 export { CarRecording, VehicleStateEachFrame, FixedVector3 } from './CarRecording';
 export { CarRecordingRecorder } from './CarRecordingRecorder';
 export { CarRecordingViewer } from './CarRecordingViewer';
+export { NativeCarRecordingViewer } from './NativeCarRecordingViewer';
 
 
 import { CarRecordingRecorder } from './CarRecordingRecorder';
