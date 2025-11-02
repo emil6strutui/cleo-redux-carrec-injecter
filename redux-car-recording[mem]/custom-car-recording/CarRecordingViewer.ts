@@ -5,6 +5,7 @@ import {PedType, SeatId} from '.config/sa.enums.js';
  * Plays back recorded vehicle movement data
  */
 export class CarRecordingViewer {
+    private player = new Player(0)
     private recording: CarRecording | null = null;
     private isPlaying: boolean = false;
     private isPaused: boolean = false;
@@ -103,8 +104,7 @@ export class CarRecordingViewer {
 
         const initialPosition = this.recording.frames[0].position
 
-        const player = new Player(0)
-        player.getChar().warpIntoCarAsPassenger(vehicle, SeatId.FrontRight)
+        this.player.getChar().warpIntoCarAsPassenger(vehicle, SeatId.FrontRight)
         this.driver = Char.Create(PedType.CivMale, 14, initialPosition.x + 2.0, initialPosition.y, initialPosition.z)
         this.driver.warpIntoCar(vehicle)
         vehicle.setIdle()
@@ -130,6 +130,7 @@ export class CarRecordingViewer {
             firstFrame.position.y,
             firstFrame.position.z
         );
+
         this.applyVehicleState(firstFrame, secondFrame, 0.0);
 
         log('Playback started');
@@ -160,6 +161,12 @@ export class CarRecordingViewer {
 
         this.isPlaying = false;
         this.isPaused = false;
+        this.player.getChar().warpFromCarToCoord(
+            this.playbackVehicle.getCoordinates().x,
+            this.playbackVehicle.getCoordinates().y,
+            this.playbackVehicle.getCoordinates().z + 1.0
+
+        )
         this.playbackVehicle = null;
         this.currentTime = 0;
         this.currentFrameIndex = 0;
@@ -220,6 +227,7 @@ export class CarRecordingViewer {
             }
         }
 
+        log(this.currentTime);
         // Get frames for interpolation
         const interpolationData = this.recording.getInterpolationFrames(this.currentTime);
         if (!interpolationData) {

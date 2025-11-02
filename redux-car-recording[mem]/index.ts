@@ -1,177 +1,134 @@
-import {NativeCarRecordingViewer} from "./NativeCarRecordingViewer";
-import {KeyCode} from "./.config/sa.enums.js"
-import {NativeCarRecordingInjector} from "./NativeCarRecordingInjector";
+import {NativeCarRecordingViewer} from "./native-car-recording/NativeCarRecordingViewer";
+import { KeyCode, PedType, SeatId} from "./.config/sa.enums.js"
+import {NativeCarRecordingInjector} from "./native-car-recording/NativeCarRecordingInjector";
+import {CarRecordingRecorder} from "./custom-car-recording/CarRecordingRecorder";
+import { VehicleRecordingMenuImGui } from "./gui/VehicleRecordingMenuImGui";
 
-let nativeViewer: NativeCarRecordingViewer | null = null;
-let isPaused = false;
+const PLAYER = new Player(0);
+const PLAYER_CHAR = PLAYER.getChar();
+const RECORDING_PATTERN = `${__dirname}\\recordings\\*.rrr`;
+const RECORDING_FOLDER = `${__dirname}\\recordings`;
+const recordings: string[] = [];
 
-// Load the recording file
-try {
-    nativeViewer = NativeCarRecordingViewer.loadFromFile(`${__dirname}/recordings/my_recording.rrr`);
-    log("Native viewer loaded successfully");
-} catch (error) {
-    log(`Failed to load recording: ${error}`);
-}
+let isPlaybackGoingOn = false;
+let carRecordingFileNumbers: {fileNumber: number, startDelay: number, car?: Car, driver?: Char, isStarted?: boolean, isPlayerAsPassanger?: boolean}[] = [];
+const findFileResult = FindFile.First(RECORDING_PATTERN);
 
-while (true) {
-    wait(0)
-
-    if (Pad.IsKeyPressed(KeyCode.LeftControl)) {
-        if (Pad.IsKeyJustPressed(KeyCode.P)) {
-            if (!nativeViewer) {
-                log("No recording loaded");
-                continue;
-            }
-
-            const injector = NativeCarRecordingInjector.loadFromFile(`${__dirname}/recordings/my_recording.rrr`);
-
-            // Inject into game (auto-assigns file number, e.g., 900)
-            const fileNumber = injector.injectIntoGame();
-
-
-            //Stop previous playback if any
-            // if (nativeViewer.isPlaying()) {
-            //     nativeViewer.stopPlayback();
-            //     continue
-            // }
-
-            // Get player's vehicle
-            const playerChar = new Player(0).getChar();
-            if (!playerChar.isInAnyCar()) {
-                log("You need to be in a vehicle to start playback");
-                continue;
-            }
-
-            const vehicle = playerChar.getCarIsUsing();
-
-            // Create a driver for the vehicle if player is in it
-            // Warp player to front right seat
-
-            vehicle.startPlayback(900)
-
-            // while(vehicle.isPlaybackGoingOn()) {
-            //     wait(0)
-            // }
-            //
-            // const recordings = NativeCarRecordingInjector.listInjectedRecordings()
-            // recordings.forEach(recording => {
-            //     log(`fileNumber:${recording.fileNumber},
-            //     indexInStreamingArray:${recording.index},
-            //     size:${recording.size},
-            //     frameCount:${recording.frameCount},
-            //     dataPtr:${recording.dataPtr}`)
-            // })
-
-            Streaming.RemoveCarRecording(900)
-
-            // Start native playback (no AI, looped)
-            // if (nativeViewer.startPlayback(vehicle, false, false)) {
-            //     log("Native playback started (no AI, physics disabled)");
-            //     log("The game's CVehicleRecording system is now handling this vehicle");
-            //     vehicle.startPlayback(900)
-            // } else {
-            //     log("Failed to start native playback");
-            // }
-        }
-        if (Pad.IsKeyJustPressed(KeyCode.L)) {
-            const slotNumbers = NativeCarRecordingViewer.getActivePlaybackSlots()
-
-            slotNumbers.forEach(slotNumber => {
-                log(`slotNumber:${slotNumber},`)
-            })
+if(findFileResult) {
+    recordings.push(findFileResult.fileName);
+    while (true) {
+        wait(0)
+        const fileName = findFileResult.handle.next();
+        if(fileName) {
+            recordings.push(fileName);
+        } else {
+            break;
         }
     }
 }
 
-// // Key combo: CTRL+SHIFT+P - Start native playback with Car AI
-// onKeyDown(onKey("P", () => {
-//     if (!isKeyPressed(Keys.LeftControl) || !isKeyPressed(Keys.LeftShift)) return;
-//     if (!nativeViewer) {
-//         log("No recording loaded");
-//         return;
-//     }
-//
-//     // Stop previous playback if any
-//     if (nativeViewer.isPlaying()) {
-//         nativeViewer.stopPlayback();
-//     }
-//
-//     // Get player's vehicle
-//     const playerPed = playerChar();
-//     if (!isCharInAnyCar(playerPed)) {
-//         log("You need to be in a vehicle to start playback");
-//         return;
-//     }
-//
-//     const vehicleHandle = getCarCharIsUsing(playerPed);
-//     lastVehicleHandle = vehicleHandle;
-//
-//     // Warp player out
-//     warpCharFromCarToCoord(playerPed, 0, 0, 0);
-//     setCharCoordinates(playerPed, ...getCarCoordinates(vehicleHandle));
-//
-//     // Create a driver
-//     const [x, y, z] = getCarCoordinates(vehicleHandle);
-//     const driverHandle = createCharInsideCar(vehicleHandle, PedType.Civmale, 0);
-//     setCharCantBeDraggedOut(driverHandle, true);
-//
-//     // Start native playback with AI
-//     if (nativeViewer.startPlayback(vehicleHandle, true, true)) {
-//         log("Native playback started (with Car AI)");
-//         log("Vehicle will use autopilot to follow the recorded path");
-//         isPaused = false;
-//     } else {
-//         log("Failed to start native playback");
-//     }
-// }));
-//
-// // Key combo: CTRL+S - Stop playback
-// onKeyDown(onKey("S", () => {
-//     if (!isKeyPressed(Keys.LeftControl)) return;
-//     if (!nativeViewer) return;
-//
-//     if (nativeViewer.isPlaying()) {
-//         nativeViewer.stopPlayback();
-//         log("Native playback stopped");
-//     }
-// }));
-//
-// // Key combo: CTRL+[ - Decrease playback speed
-// onKeyDown(onKey("OemOpenBrackets", () => {
-//     if (!isKeyPressed(Keys.LeftControl)) return;
-//     if (!nativeViewer || !nativeViewer.isPlaying()) return;
-//
-//     const currentSpeed = 1.0; // We don't track this, so we'll adjust incrementally
-//     const newSpeed = Math.max(0.1, currentSpeed - 0.1);
-//     nativeViewer.setPlaybackSpeed(newSpeed);
-//     log(`Playback speed: ${newSpeed.toFixed(1)}x`);
-// }));
-//
-// // Key combo: CTRL+] - Increase playback speed
-// onKeyDown(onKey("OemCloseBrackets", () => {
-//     if (!isKeyPressed(Keys.LeftControl)) return;
-//     if (!nativeViewer || !nativeViewer.isPlaying()) return;
-//
-//     const currentSpeed = 1.0; // We don't track this, so we'll adjust incrementally
-//     const newSpeed = Math.min(5.0, currentSpeed + 0.1);
-//     nativeViewer.setPlaybackSpeed(newSpeed);
-//     log(`Playback speed: ${newSpeed.toFixed(1)}x`);
-// }));
-//
-// // Key combo: CTRL+SPACE - Pause/Resume playback
-// onKeyDown(onKey("Space", () => {
-//     if (!isKeyPressed(Keys.LeftControl)) return;
-//     if (!nativeViewer || !nativeViewer.isPlaying()) return;
-//
-//     if (isPaused) {
-//         nativeViewer.resume();
-//         log("Playback resumed");
-//         isPaused = false;
-//     } else {
-//         nativeViewer.pause();
-//         log("Playback paused");
-//         isPaused = true;
-//     }
-// }));
-//
-//
+const vehicleRecordingMenuImGui = new VehicleRecordingMenuImGui(recordings);
+const recorder = new CarRecordingRecorder(`${RECORDING_FOLDER}\\rec`);
+
+while(true) {
+    wait(0)
+
+    recorder.update()
+    vehicleRecordingMenuImGui.update();
+
+    const recordingsToPlay = vehicleRecordingMenuImGui.getRecordingsToPlay();
+
+
+    if(isPlaybackGoingOn) {
+
+        if(carRecordingFileNumbers.length === 0) {
+            isPlaybackGoingOn = false;
+            continue;
+        }
+
+        const createdCars = carRecordingFileNumbers.filter(carRecording => carRecording.car);
+        const notCreatedCars = carRecordingFileNumbers.filter(carRecording => !carRecording.car);
+
+        if(notCreatedCars.length === 0 && createdCars.length === 0) {
+            isPlaybackGoingOn = false;
+            continue;
+        }
+
+        if(createdCars.length > 0) {
+            createdCars.forEach(carRecording => {
+
+                if(!carRecording.isStarted) {
+                    if(TIMERA > carRecording.startDelay) {
+                        carRecording.isStarted = true;
+                        carRecording.car.unpausePlayback();
+                        return;
+                    } else {
+                        return;
+                    } 
+                }
+
+                if(carRecording.car.isPlaybackGoingOn()) {
+                    return;
+                }
+
+                Streaming.RemoveCarRecording(carRecording.fileNumber);
+                
+                carRecording.driver.delete()
+                if(PLAYER_CHAR.isInCar(carRecording.car)) {
+                    PLAYER_CHAR.warpFromCarToCoord(carRecording.car.getCoordinates().x, carRecording.car.getCoordinates().y, carRecording.car.getCoordinates().z + 1.0)
+                }
+                PLAYER.setControl(true);
+                carRecording.car.delete()
+                const index = carRecordingFileNumbers.indexOf(carRecording);
+                if(index > -1) {
+                    carRecordingFileNumbers.splice(index, 1);
+                }
+            });
+        }
+
+        if(notCreatedCars.length > 0) {
+            notCreatedCars.forEach(carRecording => {
+
+                Streaming.RequestModel(445)//Admiral
+                Streaming.RequestModel(14)
+                Streaming.LoadAllModelsNow()
+                const car = Car.Create(445, 0, 0, 0);
+                carRecording.car = car;
+                carRecording.driver = Char.Create(PedType.CivMale, 14, 0, 0, 0);
+                Streaming.MarkModelAsNoLongerNeeded(445)
+                Streaming.MarkModelAsNoLongerNeeded(14)
+                carRecording.driver.warpIntoCar(car);
+                if(carRecording.isPlayerAsPassanger) {
+                    PLAYER_CHAR.warpIntoCarAsPassenger(car, SeatId.FrontRight);
+                }
+                car.startPlayback(carRecording.fileNumber);
+                car.pausePlayback();
+                carRecording.isStarted = false;
+            });
+        }
+        continue;
+    }
+
+    if(recordingsToPlay.length > 0) {
+        recordingsToPlay.forEach(recording => {
+
+            const injector = NativeCarRecordingInjector.loadFromFile(`${RECORDING_FOLDER}\\${recording.name}`);
+
+            // Inject into game (auto-assigns file number, e.g., 900)
+            const fileNumber = injector.injectIntoGame();
+            carRecordingFileNumbers.push({fileNumber: fileNumber, startDelay: recording.startDelay, isPlayerAsPassanger: recording.isPlayerAsPassanger});
+        });
+
+        isPlaybackGoingOn = true;
+        TIMERA = 0
+        vehicleRecordingMenuImGui.recordingsToPlayClear();
+        vehicleRecordingMenuImGui.close();
+        continue;
+    }
+
+
+
+    if(Pad.IsKeyPressed(KeyCode.Shift) && Pad.IsKeyJustPressed(KeyCode.L)) {
+        vehicleRecordingMenuImGui.open();
+    }
+}

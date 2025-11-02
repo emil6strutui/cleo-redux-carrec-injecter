@@ -1,4 +1,4 @@
-import { CarRecording } from "./CarRecording";
+import { CarRecording } from "../custom-car-recording/CarRecording";
 
 /**
  * NativeCarRecordingInjector injects car recordings into the game's StreamingArray,

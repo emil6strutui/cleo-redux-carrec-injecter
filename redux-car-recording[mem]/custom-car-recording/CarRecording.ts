@@ -197,13 +197,6 @@ export class CarRecording {
     /** Array of recorded frames */
     frames: VehicleStateEachFrame[] = [];
 
-    /** Recording number/ID */
-    recordingNumber: number = 0;
-
-    constructor(recordingNumber: number = 0) {
-        this.recordingNumber = recordingNumber;
-    }
-
     /**
      * Add a frame to the recording
      */
@@ -255,8 +248,8 @@ export class CarRecording {
     /**
      * Deserialize a recording from a binary buffer
      */
-    static fromBuffer(buffer: ArrayBuffer, recordingNumber: number = 0): CarRecording {
-        const recording = new CarRecording(recordingNumber);
+    static fromBuffer(buffer: ArrayBuffer): CarRecording {
+        const recording = new CarRecording();
         const frameSize = 32;
         const frameCount = buffer.byteLength / frameSize;
 

@@ -1,4 +1,4 @@
-import { CarRecording } from "./CarRecording";
+import { CarRecording } from "../custom-car-recording/CarRecording";
 
 /**
  * NativeCarRecordingViewer uses the game's native CVehicleRecording system

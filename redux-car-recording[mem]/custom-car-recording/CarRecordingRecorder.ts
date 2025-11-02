@@ -1,5 +1,5 @@
 import { CarRecording, VehicleStateEachFrame, FixedVector3 } from './CarRecording';
-import { KeyCode } from '.config/sa.enums.js'
+import { KeyCode } from '../.config/sa.enums.js'
 /**
  * Vehicle memory offsets for GTA San Andreas
  * Based on CVehicle structure from gta-reversed
@@ -35,18 +35,18 @@ export class CarRecordingRecorder {
     private lastKeyCheckTime: number = 0;
 
     /** Base recording interval in milliseconds */
-    private readonly BASE_INTERVAL_MS = 225;
+    private readonly BASE_INTERVAL_MS = 100;
     /** Random variation to add to recording interval (0-50ms) */
     private readonly RANDOM_INTERVAL_MAX = 50;
     /** Minimum time between key presses in milliseconds */
     private readonly KEY_RELEASE_THRESHOLD = 500;
 
-    constructor(private readonly filePath: string, recordingNumber: number = 0) {
-        this.recording = new CarRecording(recordingNumber);
+    constructor(private readonly filePath: string) {
+        this.recording = new CarRecording();
     }
 
     /**
-     * Main update loop - call this every frame
+     * Main processing loop - call this every frame
      */
     update(): void {
         // Check for toggle key combination
@@ -111,10 +111,39 @@ export class CarRecordingRecorder {
         const currentTime = Clock.GetGameTimer();
         this.recordingStartTime = currentTime;
         this.lastRecordTime = currentTime;
-        this.nextRecordingInterval = this.calculateNextInterval();
+        this.nextRecordingInterval = 0;
 
+        const findFileResult = FindFile.First(`${this.filePath}*.rrr`);
+
+        let actualFilePath = this.filePath;
+
+        if(findFileResult) {
+            let fileName = findFileResult.fileName;
+            while(true) {
+                wait(0)
+                const carRecordingNumber = fileName.match(/\d/g)?.join('') || '';
+                
+                if(carRecordingNumber !== '') {
+                    actualFilePath = `${this.filePath}${parseInt(carRecordingNumber) + 1}.rrr`;
+                } else {
+                    actualFilePath = `${this.filePath}1.rrr`;
+                }
+
+                fileName = findFileResult.handle.next();
+
+                if(!fileName) {
+                    break;
+                }
+            }
+            findFileResult.handle.close();
+        } else {
+            actualFilePath = `${actualFilePath}1.rrr`;
+        }
+
+
+        log(`actualFilePath:${actualFilePath}`);
         // Open file for writing
-        const file = File.Open(this.filePath, "wb" as any);
+        const file = File.Open(actualFilePath, "wb" as any);
         if (!file) {
             showTextBox('Failed to open recording file');
             return;
@@ -122,7 +151,6 @@ export class CarRecordingRecorder {
 
         this.fileHandle = file;
         this.isRecording = true;
-        this.recordFrame(0)
     }
 
     /**
@@ -185,7 +213,6 @@ export class CarRecordingRecorder {
         if (timeSinceLastRecord >= this.nextRecordingInterval) {
             // Calculate elapsed time since recording started
             const totalTime = currentTime - this.recordingStartTime;
-
             // Record current vehicle state
             this.recordFrame(totalTime);
 
@@ -264,7 +291,6 @@ export class CarRecordingRecorder {
             const coords = vehicle.getCoordinates();
             frame.position = new FixedVector3(coords.x, coords.y, coords.z);
 
-            log(`gas pedal: ${frame.gasPedal} brake pedal ${frame.brakePedal} steering angle: ${frame.steeringAngle}`)
             // Add frame to recording and write to file
             this.recording.addFrame(frame);
 
