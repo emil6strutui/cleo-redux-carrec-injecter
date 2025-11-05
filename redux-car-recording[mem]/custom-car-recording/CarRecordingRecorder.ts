@@ -48,13 +48,15 @@ export class CarRecordingRecorder {
     /**
      * Main processing loop - call this every frame
      */
-    update(): void {
+    update(): boolean {
         // Check for toggle key combination
         this.checkToggleRecording();
 
         if (this.isRecording) {
             this.processRecording();
         }
+
+        return this.isRecording;
     }
 
     /**

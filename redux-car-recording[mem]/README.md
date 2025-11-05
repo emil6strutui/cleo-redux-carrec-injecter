@@ -2,6 +2,12 @@
 
 A comprehensive TypeScript-based vehicle recording and playback system for GTA San Andreas using CLEO Redux. This system allows you to record vehicle movements and play them back using either custom frame-by-frame playback or native GTA SA game mechanics.
 
+Video Demonstration:
+
+[![Youtube Video](https://img.youtube.com/vi/_whPSB7gBa0/0.jpg)](https://www.youtube.com/watch?v=_whPSB7gBa0)
+
+
+
 ## Table of Contents
 
 - [Overview](#overview)
